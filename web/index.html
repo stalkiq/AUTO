@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AUTO</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo">A</div>
+          <div>
+            <div class="title">AUTO</div>
+            <div class="subtitle">Auto builder scaffold (CloudFront UI)</div>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <input id="apiBase" class="input" placeholder="API base (optional)" />
+          <button id="saveApi" class="btn secondary">Save</button>
+        </div>
+      </header>
+
+      <div class="main">
+        <aside class="panel left">
+          <div class="panel-header">
+            <div class="panel-title">Workspace</div>
+            <div class="panel-meta">blank scaffold</div>
+          </div>
+          <div class="panel-body">
+            <div class="empty">
+              <div class="empty-title">No files yet</div>
+              <div class="empty-sub">AUTO starts as an empty workspace. Generated files will show here once a runner is connected.</div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="panel center">
+          <div class="panel-header">
+            <div class="panel-title">Chat</div>
+            <div class="panel-meta">Nova via Bedrock</div>
+          </div>
+
+          <div id="chat" class="chat"></div>
+
+          <div class="composer">
+            <textarea id="prompt" class="textarea" rows="2" placeholder="Ask Nova to build something... (Ctrl/Cmd+Enter to send)"></textarea>
+            <div class="composer-actions">
+              <button id="send" class="btn">Send</button>
+              <button id="clear" class="btn secondary">Clear</button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="panel right">
+          <div class="panel-header">
+            <div class="panel-title">Actions</div>
+            <div class="panel-meta">patch preview scaffold</div>
+          </div>
+          <div class="panel-body">
+            <div class="empty">
+              <div class="empty-title">No actions yet</div>
+              <div class="empty-sub">When the model returns structured actions (create file, edit file), they will show here.</div>
+            </div>
+          </div>
+          <div class="panel-footer">
+            <button id="apply" class="btn" disabled>Apply Patch (disabled)</button>
+            <div class="footnote">Enabled when a backend runner is wired.</div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
