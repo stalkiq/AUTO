@@ -33,3 +33,19 @@ import('./backend/auto-api.mjs').then(async (m) => {
 - There is **no test suite, no linter config, and no build step** in this scaffold. Code quality checks must be done manually or by adding tooling.
 - Environment variables are documented in `.env.example`. For Lambda deployment, set them as Lambda environment variables per `infra/DEPLOY_NOTES.md`.
 - All backend files are `.mjs` (ESM). The `package.json` has `"type": "module"`.
+
+### CloudFront deployment
+
+The frontend is deployed to CloudFront at **https://dszqj6kafy4d7.cloudfront.net/**.
+
+- **S3 bucket:** `auto-frontend-016442247702-us-east-1`
+- **CloudFront distribution:** `E31YIXNNRC4RYX` (`dszqj6kafy4d7.cloudfront.net`)
+- **Origin Access Control:** `EE8HJ9BHR0JQO`
+
+To redeploy frontend changes:
+```sh
+aws s3 sync web/ s3://auto-frontend-016442247702-us-east-1/ --delete
+aws cloudfront create-invalidation --distribution-id E31YIXNNRC4RYX --paths "/*"
+```
+
+Requires `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` secrets with S3 + CloudFront permissions.
