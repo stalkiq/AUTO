@@ -1,6 +1,6 @@
 # AUTO (AWS-only OpenClaw-style scaffold)
 
-AUTO is a CloudFront-hosted, chat-first builder that follows an OpenClaw-like pattern:
+AUTO is a CloudFront-hosted, chat-first builder that follows an OpenClaw-like pattern and a PARALINK-style command-center UI:
 
 - **Control plane API** (Lambda + API Gateway)
 - **Nova chat** (Bedrock Runtime)
@@ -12,7 +12,7 @@ This repository is intentionally scaffold-first: safe defaults, no secrets commi
 
 ## What is included
 
-- `web/`: static UI (left workspace, center chat, right actions/runs)
+- `web/`: static UI (PARALINK-like shell, left mission nav, center assistant, right AWS control panel)
 - `backend/chat-lambda.mjs`: simple Nova chat Lambda
 - `backend/auto-api.mjs`: single control-plane Lambda for chat/workspace/runs
 - `backend/whatsapp-webhook-stub.mjs`: WhatsApp ingress stub
@@ -34,6 +34,11 @@ Optional:
 
 - `POST /channels/whatsapp/webhook` -> WhatsApp adapter stub
 
+Additional write-access routes:
+
+- `POST /aws/validate` -> validates caller-provided AWS credentials (STS identity)
+- `POST /aws/execute` -> executes allowlisted write operations using caller credentials
+
 ## Environment
 
 Copy `.env.example` and set values in Lambda environment variables.
@@ -46,6 +51,7 @@ Key values:
 - `WORKSPACE_BUCKET`
 - `RUNS_TABLE`
 - `CODEBUILD_PROJECT` (optional)
+- `AUTO_ADMIN_TOKEN` (recommended)
 
 ## Local usage (UI only)
 
@@ -60,3 +66,4 @@ Example API base:
 - Do not expose push-to-GitHub or shell execution directly from public web routes.
 - Put auth in front of mutation routes (`workspace/*`, `runs/*`).
 - Keep code execution in a sandbox runner (CodeBuild/ECS), not in Lambda.
+- `aws/execute` is allowlisted and should remain tightly scoped.
