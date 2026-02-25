@@ -1,4 +1,4 @@
-// AUTO control-plane Lambda (AWS-only scaffold)
+// AUTO control-plane Lambda (AWS-only, OpenClaw-like scaffold)
 // Routes:
 // - POST /chat
 // - POST /workspace/create
@@ -6,18 +6,22 @@
 // - GET  /workspace/list?workspaceId=...
 // - POST /runs/start
 // - GET  /runs/status?runId=...
+// - POST /aws/validate
+// - POST /aws/execute
 //
-// Notes:
-// - This is a safe scaffold, not a full production runner.
-// - Workspace files are persisted in S3 under workspaces/{workspaceId}/...
-// - Run metadata is persisted in DynamoDB.
+// IMPORTANT:
+// - This scaffold allows write operations using caller-provided AWS credentials.
+// - Keep auth enabled in production and restrict operations to an allowlist.
 
 import { randomUUID } from "node:crypto";
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
-import { S3Client, PutObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { CodeBuildClient, StartBuildCommand } from "@aws-sdk/client-codebuild";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
+import { CloudFrontClient, CreateInvalidationCommand } from "@aws-sdk/client-cloudfront";
+import { LambdaClient, UpdateFunctionConfigurationCommand, GetFunctionConfigurationCommand } from "@aws-sdk/client-lambda";
 
 const REGION = process.env.AWS_REGION || "us-east-1";
 const MODEL_ID = process.env.NOVA_MODEL_ID || "nova-lite-v1";
@@ -55,7 +59,12 @@ function parseJson(body) {
 }
 
 function requiresAuth(pathname) {
-  return pathname.includes("/workspace/patch") || pathname.includes("/runs/start");
+  return (
+    pathname.includes("/workspace/patch") ||
+    pathname.includes("/runs/start") ||
+    pathname.includes("/aws/execute") ||
+    pathname.includes("/aws/validate")
+  );
 }
 
 function isAuthorized(event) {
@@ -66,7 +75,35 @@ function isAuthorized(event) {
     event?.headers?.authorization ||
     event?.headers?.Authorization ||
     "";
-  return String(token).trim() === ADMIN_TOKEN || String(token).trim() === `Bearer ${ADMIN_TOKEN}`;
+  const t = String(token).trim();
+  return t === ADMIN_TOKEN || t === `Bearer ${ADMIN_TOKEN}`;
+}
+
+function getAwsCreds(body) {
+  const c = body?.awsCredentials || {};
+  const accessKeyId = String(c.accessKeyId || "").trim();
+  const secretAccessKey = String(c.secretAccessKey || "").trim();
+  const sessionToken = String(c.sessionToken || "").trim();
+  const region = String(c.region || REGION).trim() || REGION;
+  if (!accessKeyId || !secretAccessKey) {
+    throw new Error("awsCredentials.accessKeyId and awsCredentials.secretAccessKey are required");
+  }
+  return {
+    region,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      ...(sessionToken ? { sessionToken } : {}),
+    },
+  };
+}
+
+function safeJsonParse(v) {
+  try {
+    return typeof v === "string" ? JSON.parse(v) : v;
+  } catch {
+    return v;
+  }
 }
 
 async function chat(messages) {
@@ -79,7 +116,7 @@ async function chat(messages) {
 
   const payload = {
     messages: [
-      { role: "system", content: "You are AUTO, an AWS-only app-building assistant. Reply with concise steps first." },
+      { role: "system", content: "You are AUTO, an AWS-only app-building assistant. Be concise and action-oriented." },
       { role: "user", content: userText },
     ],
     temperature: 0.25,
@@ -142,7 +179,13 @@ async function workspaceList(workspaceId) {
   if (!WORKSPACE_BUCKET) throw new Error("WORKSPACE_BUCKET not configured");
 
   const prefix = `workspaces/${workspaceId}/`;
-  const out = await s3.send(new ListObjectsV2Command({ Bucket: WORKSPACE_BUCKET, Prefix: prefix, MaxKeys: 1000 }));
+  const out = await s3.send(
+    new ListObjectsV2Command({
+      Bucket: WORKSPACE_BUCKET,
+      Prefix: prefix,
+      MaxKeys: 1000,
+    }),
+  );
   const files = (out.Contents || [])
     .map((o) => String(o.Key || ""))
     .filter((k) => k && !k.endsWith("/.init"))
@@ -193,6 +236,129 @@ async function runsStatus(runId) {
   return out.Item || { runId, status: "not_found" };
 }
 
+async function awsValidate(body) {
+  const config = getAwsCreds(body);
+  const sts = new STSClient(config);
+  const ident = await sts.send(new GetCallerIdentityCommand({}));
+  return {
+    ok: true,
+    identity: {
+      account: ident.Account || "",
+      arn: ident.Arn || "",
+      userId: ident.UserId || "",
+    },
+    region: config.region,
+    writeOpsSupported: [
+      "s3_put_object",
+      "s3_delete_object",
+      "cloudfront_invalidate",
+      "dynamodb_put_item",
+      "lambda_update_env",
+    ],
+  };
+}
+
+async function awsExecute(body) {
+  const config = getAwsCreds(body);
+  const operation = String(body?.operation || "").trim();
+  const input = safeJsonParse(body?.input || {});
+  if (!operation) throw new Error("operation required");
+
+  if (operation === "s3_put_object") {
+    const bucket = String(input?.bucket || "").trim();
+    const key = String(input?.key || "").trim().replace(/^\/+/, "");
+    const content = String(input?.content || "");
+    const contentType = String(input?.contentType || "text/plain; charset=utf-8");
+    if (!bucket || !key) throw new Error("input.bucket and input.key required");
+    const c = new S3Client(config);
+    await c.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: content,
+        ContentType: contentType,
+      }),
+    );
+    return { ok: true, operation, bucket, key, bytes: content.length };
+  }
+
+  if (operation === "s3_delete_object") {
+    const bucket = String(input?.bucket || "").trim();
+    const key = String(input?.key || "").trim().replace(/^\/+/, "");
+    if (!bucket || !key) throw new Error("input.bucket and input.key required");
+    const c = new S3Client(config);
+    await c.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    return { ok: true, operation, bucket, key };
+  }
+
+  if (operation === "cloudfront_invalidate") {
+    const distributionId = String(input?.distributionId || "").trim();
+    const paths = Array.isArray(input?.paths) && input.paths.length ? input.paths.map((p) => String(p)) : ["/*"];
+    if (!distributionId) throw new Error("input.distributionId required");
+    const c = new CloudFrontClient(config);
+    const callerReference = `auto-${Date.now()}-${randomUUID().slice(0, 6)}`;
+    const res = await c.send(
+      new CreateInvalidationCommand({
+        DistributionId: distributionId,
+        InvalidationBatch: {
+          CallerReference: callerReference,
+          Paths: { Quantity: paths.length, Items: paths },
+        },
+      }),
+    );
+    return {
+      ok: true,
+      operation,
+      distributionId,
+      invalidationId: res?.Invalidation?.Id || null,
+      status: res?.Invalidation?.Status || null,
+    };
+  }
+
+  if (operation === "dynamodb_put_item") {
+    const tableName = String(input?.tableName || "").trim();
+    const item = input?.item;
+    if (!tableName || !item || typeof item !== "object") throw new Error("input.tableName and input.item required");
+    const doc = DynamoDBDocumentClient.from(new DynamoDBClient(config));
+    await doc.send(new PutCommand({ TableName: tableName, Item: item }));
+    return { ok: true, operation, tableName };
+  }
+
+  if (operation === "lambda_update_env") {
+    const functionName = String(input?.functionName || "").trim();
+    const environment = input?.environment;
+    const merge = input?.merge !== false;
+    if (!functionName || !environment || typeof environment !== "object") {
+      throw new Error("input.functionName and input.environment object required");
+    }
+    const c = new LambdaClient(config);
+
+    let variables = {};
+    if (merge) {
+      const cur = await c.send(new GetFunctionConfigurationCommand({ FunctionName: functionName }));
+      variables = { ...(cur?.Environment?.Variables || {}), ...environment };
+    } else {
+      variables = { ...environment };
+    }
+
+    const out = await c.send(
+      new UpdateFunctionConfigurationCommand({
+        FunctionName: functionName,
+        Environment: { Variables: variables },
+      }),
+    );
+    return {
+      ok: true,
+      operation,
+      functionName,
+      lastUpdateStatus: out?.LastUpdateStatus || null,
+      version: out?.Version || null,
+    };
+  }
+
+  throw new Error(`Unsupported operation: ${operation}`);
+}
+
 export const handler = async (event) => {
   const origin = event?.headers?.origin || event?.headers?.Origin || "*";
   const method = String(event?.httpMethod || "GET").toUpperCase();
@@ -224,6 +390,14 @@ export const handler = async (event) => {
     if (method === "GET" && path.endsWith("/runs/status")) {
       const qs = event?.queryStringParameters || {};
       return json(200, await runsStatus(String(qs.runId || "")), origin);
+    }
+    if (method === "POST" && path.endsWith("/aws/validate")) {
+      const body = parseJson(event?.body);
+      return json(200, await awsValidate(body), origin);
+    }
+    if (method === "POST" && path.endsWith("/aws/execute")) {
+      const body = parseJson(event?.body);
+      return json(200, await awsExecute(body), origin);
     }
     return json(404, { error: "Route not found" }, origin);
   } catch (e) {

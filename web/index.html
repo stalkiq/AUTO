@@ -3,74 +3,124 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AUTO</title>
+    <title>AUTO Command Center</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app">
-      <header class="topbar">
+      <aside class="sidebar">
         <div class="brand">
           <div class="logo">A</div>
           <div>
-            <div class="title">AUTO</div>
-            <div class="subtitle">Auto builder scaffold (CloudFront UI)</div>
+            <div class="brand-title">AUTO</div>
+            <div class="brand-sub">Mission Zone · Builder</div>
           </div>
         </div>
 
-        <div class="topbar-right">
-          <input id="apiBase" class="input" placeholder="API base (optional)" />
-          <button id="saveApi" class="btn secondary">Save</button>
+        <div class="nav-group">
+          <div class="nav-title">AUTO WORKSPACE</div>
+          <button class="nav-item active">Command Center</button>
+          <button class="nav-item">Workspace</button>
+          <button class="nav-item">Runs</button>
+          <button class="nav-item">Channels</button>
         </div>
-      </header>
 
-      <div class="main">
-        <aside class="panel left">
-          <div class="panel-header">
-            <div class="panel-title">Workspace</div>
-            <div class="panel-meta">blank scaffold</div>
+        <div class="nav-group">
+          <div class="nav-title">AWS SESSION</div>
+          <div class="kv"><span>Status</span><span id="awsStatus" class="badge">Not connected</span></div>
+          <div class="kv"><span>Account</span><span id="awsAccount">—</span></div>
+          <div class="kv"><span>Region</span><span id="awsRegionLabel">us-east-1</span></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="crumbs">Mission Zones · Auto</div>
+          <div class="top-controls">
+            <input id="apiBase" class="input" placeholder="API base (https://.../prod)" />
+            <button id="saveApi" class="btn secondary">Save API</button>
           </div>
-          <div class="panel-body">
-            <div class="empty">
-              <div class="empty-title">No files yet</div>
-              <div class="empty-sub">AUTO starts as an empty workspace. Generated files will show here once a runner is connected.</div>
-            </div>
+        </header>
+
+        <section class="cards">
+          <div class="card">
+            <div class="label">Model</div>
+            <div class="value">Nova (Bedrock)</div>
           </div>
-        </aside>
-
-        <section class="panel center">
-          <div class="panel-header">
-            <div class="panel-title">Chat</div>
-            <div class="panel-meta">Nova via Bedrock</div>
+          <div class="card">
+            <div class="label">Mode</div>
+            <div class="value">Read + Write AWS</div>
           </div>
-
-          <div id="chat" class="chat"></div>
-
-          <div class="composer">
-            <textarea id="prompt" class="textarea" rows="2" placeholder="Ask Nova to build something... (Ctrl/Cmd+Enter to send)"></textarea>
-            <div class="composer-actions">
-              <button id="send" class="btn">Send</button>
-              <button id="clear" class="btn secondary">Clear</button>
-            </div>
+          <div class="card">
+            <div class="label">Workspace</div>
+            <div class="value mono" id="workspaceId">None</div>
+          </div>
+          <div class="card">
+            <div class="label">Last Run</div>
+            <div class="value mono" id="lastRunId">—</div>
           </div>
         </section>
 
-        <aside class="panel right">
-          <div class="panel-header">
-            <div class="panel-title">Actions</div>
-            <div class="panel-meta">patch preview scaffold</div>
-          </div>
-          <div class="panel-body">
-            <div class="empty">
-              <div class="empty-title">No actions yet</div>
-              <div class="empty-sub">When the model returns structured actions (create file, edit file), they will show here.</div>
+        <section class="content">
+          <section class="panel chat-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Assistant</div>
+                <div class="panel-sub">Plan, generate, patch, and execute workflows</div>
+              </div>
+              <div class="panel-actions">
+                <button id="clear" class="btn secondary">Clear</button>
+              </div>
             </div>
-          </div>
-          <div class="panel-footer">
-            <button id="apply" class="btn" disabled>Apply Patch (disabled)</button>
-            <div class="footnote">Enabled when a backend runner is wired.</div>
-          </div>
-        </aside>
-      </div>
+            <div id="chat" class="chat"></div>
+            <div class="composer">
+              <textarea id="prompt" rows="3" placeholder="Ask AUTO to build or operate on AWS... (Ctrl/Cmd+Enter)"></textarea>
+              <div class="composer-actions">
+                <button id="send" class="btn">Send</button>
+              </div>
+            </div>
+          </section>
+
+          <aside class="panel control-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">AWS Credentials</div>
+                <div class="panel-sub">Provide session credentials for write actions</div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <input id="awsAccessKey" class="input full" placeholder="AWS Access Key ID" />
+              <input id="awsSecretKey" class="input full" placeholder="AWS Secret Access Key" />
+              <input id="awsSessionToken" class="input full" placeholder="AWS Session Token (optional)" />
+              <input id="awsRegion" class="input full" placeholder="Region (default us-east-1)" value="us-east-1" />
+              <button id="validateAws" class="btn full">Validate AWS Session</button>
+            </div>
+
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Write Action</div>
+                <div class="panel-sub">Allowed operations only</div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <select id="operation" class="input full">
+                <option value="s3_put_object">s3_put_object</option>
+                <option value="s3_delete_object">s3_delete_object</option>
+                <option value="cloudfront_invalidate">cloudfront_invalidate</option>
+                <option value="dynamodb_put_item">dynamodb_put_item</option>
+                <option value="lambda_update_env">lambda_update_env</option>
+              </select>
+              <textarea id="operationInput" rows="8" placeholder='{"bucket":"my-bucket","key":"path/file.txt","content":"hello"}'></textarea>
+              <button id="executeAws" class="btn danger full">Execute Write Action</button>
+            </div>
+
+            <div class="panel-header">
+              <div class="panel-title">Run Log</div>
+            </div>
+            <div id="runLog" class="log"></div>
+          </aside>
+        </section>
+      </main>
     </div>
 
     <script src="./app.js"></script>
