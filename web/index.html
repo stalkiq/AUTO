@@ -3,124 +3,70 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AUTO Command Center</title>
+    <title>AUTO</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app">
-      <aside class="sidebar">
+      <header class="topbar">
         <div class="brand">
           <div class="logo">A</div>
           <div>
             <div class="brand-title">AUTO</div>
-            <div class="brand-sub">Mission Zone · Builder</div>
+            <div class="brand-sub">AI Builder on AWS</div>
           </div>
         </div>
-
-        <div class="nav-group">
-          <div class="nav-title">AUTO WORKSPACE</div>
-          <button class="nav-item active">Command Center</button>
-          <button class="nav-item">Workspace</button>
-          <button class="nav-item">Runs</button>
-          <button class="nav-item">Channels</button>
+        <div class="top-controls">
+          <div id="awsBadge" class="aws-badge disconnected">AWS: Not connected</div>
+          <button id="togglePanel" class="btn secondary">AWS Settings</button>
         </div>
+      </header>
 
-        <div class="nav-group">
-          <div class="nav-title">AWS SESSION</div>
-          <div class="kv"><span>Status</span><span id="awsStatus" class="badge">Not connected</span></div>
-          <div class="kv"><span>Account</span><span id="awsAccount">—</span></div>
-          <div class="kv"><span>Region</span><span id="awsRegionLabel">us-east-1</span></div>
-        </div>
-      </aside>
-
-      <main class="main">
-        <header class="topbar">
-          <div class="crumbs">Mission Zones · Auto</div>
-          <div class="top-controls">
-            <input id="apiBase" class="input" placeholder="API base (https://.../prod)" />
-            <button id="saveApi" class="btn secondary">Save API</button>
-          </div>
-        </header>
-
-        <section class="cards">
-          <div class="card">
-            <div class="label">Model</div>
-            <div class="value">Nova (Bedrock)</div>
-          </div>
-          <div class="card">
-            <div class="label">Mode</div>
-            <div class="value">Read + Write AWS</div>
-          </div>
-          <div class="card">
-            <div class="label">Workspace</div>
-            <div class="value mono" id="workspaceId">None</div>
-          </div>
-          <div class="card">
-            <div class="label">Last Run</div>
-            <div class="value mono" id="lastRunId">—</div>
+      <div class="main">
+        <section class="chat-area">
+          <div id="chat" class="chat"></div>
+          <div class="composer">
+            <textarea id="prompt" rows="2" placeholder="Ask AUTO anything... (Ctrl+Enter to send)"></textarea>
+            <div class="composer-actions">
+              <button id="send" class="btn">Send</button>
+              <button id="clear" class="btn secondary">Clear</button>
+            </div>
           </div>
         </section>
 
-        <section class="content">
-          <section class="panel chat-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Assistant</div>
-                <div class="panel-sub">Plan, generate, patch, and execute workflows</div>
-              </div>
-              <div class="panel-actions">
-                <button id="clear" class="btn secondary">Clear</button>
-              </div>
-            </div>
-            <div id="chat" class="chat"></div>
-            <div class="composer">
-              <textarea id="prompt" rows="3" placeholder="Ask AUTO to build or operate on AWS... (Ctrl/Cmd+Enter)"></textarea>
-              <div class="composer-actions">
-                <button id="send" class="btn">Send</button>
-              </div>
-            </div>
-          </section>
+        <aside id="sidePanel" class="side-panel hidden">
+          <div class="panel-section">
+            <div class="panel-label">AWS Credentials</div>
+            <div class="panel-hint">Enter your AWS keys to run write actions</div>
+            <input id="awsAccessKey" class="input full" placeholder="Access Key ID" />
+            <input id="awsSecretKey" class="input full" type="password" placeholder="Secret Access Key" />
+            <input id="awsSessionToken" class="input full" placeholder="Session Token (optional)" />
+            <input id="awsRegion" class="input full" placeholder="Region" value="us-east-1" />
+            <button id="validateAws" class="btn full">Connect</button>
+            <div id="awsStatusMsg" class="status-msg"></div>
+          </div>
 
-          <aside class="panel control-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">AWS Credentials</div>
-                <div class="panel-sub">Provide session credentials for write actions</div>
-              </div>
-            </div>
-            <div class="panel-body">
-              <input id="awsAccessKey" class="input full" placeholder="AWS Access Key ID" />
-              <input id="awsSecretKey" class="input full" placeholder="AWS Secret Access Key" />
-              <input id="awsSessionToken" class="input full" placeholder="AWS Session Token (optional)" />
-              <input id="awsRegion" class="input full" placeholder="Region (default us-east-1)" value="us-east-1" />
-              <button id="validateAws" class="btn full">Validate AWS Session</button>
-            </div>
+          <div class="panel-section">
+            <div class="panel-label">Run an AWS Action</div>
+            <div class="panel-hint">Pick an action and fill in the details</div>
+            <select id="operation" class="input full">
+              <option value="s3_put_object">Upload file to S3</option>
+              <option value="s3_delete_object">Delete file from S3</option>
+              <option value="cloudfront_invalidate">Clear CloudFront cache</option>
+              <option value="dynamodb_put_item">Write to DynamoDB</option>
+              <option value="lambda_update_env">Update Lambda env vars</option>
+            </select>
+            <div id="actionForm" class="action-form"></div>
+            <button id="executeAws" class="btn danger full">Run Action</button>
+            <div id="actionResult" class="status-msg"></div>
+          </div>
 
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Write Action</div>
-                <div class="panel-sub">Allowed operations only</div>
-              </div>
-            </div>
-            <div class="panel-body">
-              <select id="operation" class="input full">
-                <option value="s3_put_object">s3_put_object</option>
-                <option value="s3_delete_object">s3_delete_object</option>
-                <option value="cloudfront_invalidate">cloudfront_invalidate</option>
-                <option value="dynamodb_put_item">dynamodb_put_item</option>
-                <option value="lambda_update_env">lambda_update_env</option>
-              </select>
-              <textarea id="operationInput" rows="8" placeholder='{"bucket":"my-bucket","key":"path/file.txt","content":"hello"}'></textarea>
-              <button id="executeAws" class="btn danger full">Execute Write Action</button>
-            </div>
-
-            <div class="panel-header">
-              <div class="panel-title">Run Log</div>
-            </div>
+          <div class="panel-section">
+            <div class="panel-label">Log</div>
             <div id="runLog" class="log"></div>
-          </aside>
-        </section>
-      </main>
+          </div>
+        </aside>
+      </div>
     </div>
 
     <script src="./app.js"></script>
