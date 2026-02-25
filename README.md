@@ -1,29 +1,62 @@
-# AUTO
+# AUTO (AWS-only OpenClaw-style scaffold)
 
-A minimal scaffold for an "Auto"-style builder UI (Cursor/OpenClaw-inspired):
+AUTO is a CloudFront-hosted, chat-first builder that follows an OpenClaw-like pattern:
 
-- Left: blank workspace panel (file tree scaffold)
-- Center: chat (Amazon Nova via Bedrock)
-- Right: actions/patch preview scaffold
+- **Control plane API** (Lambda + API Gateway)
+- **Nova chat** (Bedrock Runtime)
+- **Workspace persistence** (S3)
+- **Run queue** (DynamoDB + optional CodeBuild)
+- **Channel adapters** as stubs (WhatsApp webhook scaffold)
 
-This repo is intentionally lightweight and safe-by-default.
+This repository is intentionally scaffold-first: safe defaults, no secrets committed, and no direct browser shell execution.
 
-## Folders
+## What is included
 
-- `web/` static UI (upload to S3 + CloudFront)
-- `backend/` Lambda handlers
-- `infra/` deployment notes
+- `web/`: static UI (left workspace, center chat, right actions/runs)
+- `backend/chat-lambda.mjs`: simple Nova chat Lambda
+- `backend/auto-api.mjs`: single control-plane Lambda for chat/workspace/runs
+- `backend/whatsapp-webhook-stub.mjs`: WhatsApp ingress stub
+- `backend/package.json`: Lambda dependencies for AWS SDK v3
+- `infra/DEPLOY_NOTES.md`: AWS-only deployment blueprint
+
+## API routes (intended)
+
+Mount `backend/auto-api.mjs` behind API Gateway routes:
+
+- `POST /chat` -> Nova chat completion
+- `POST /workspace/create` -> create workspace id
+- `POST /workspace/patch` -> create/update file in workspace
+- `GET /workspace/list?workspaceId=...` -> list workspace files
+- `POST /runs/start` -> queue run + optional CodeBuild trigger
+- `GET /runs/status?runId=...` -> run status
+
+Optional:
+
+- `POST /channels/whatsapp/webhook` -> WhatsApp adapter stub
+
+## Environment
+
+Copy `.env.example` and set values in Lambda environment variables.
+
+Key values:
+
+- `AWS_REGION`
+- `NOVA_MODEL_ID`
+- `ALLOWED_ORIGIN`
+- `WORKSPACE_BUCKET`
+- `RUNS_TABLE`
+- `CODEBUILD_PROJECT` (optional)
 
 ## Local usage (UI only)
 
-Open `web/index.html`.
+Open `web/index.html`, set `API base` in the header, and send prompts.
 
-To connect chat, set an API base URL (e.g. `https://xxxx.execute-api.us-east-1.amazonaws.com/prod`) in the UI.
+Example API base:
 
-## Backend
+`https://xxxx.execute-api.us-east-1.amazonaws.com/prod`
 
-Deploy `backend/chat-lambda.mjs` behind API Gateway as `POST /chat`.
+## Security notes
 
-## Security note
-
-A public website should not be allowed to run arbitrary code or push to GitHub without authentication and a sandbox runner.
+- Do not expose push-to-GitHub or shell execution directly from public web routes.
+- Put auth in front of mutation routes (`workspace/*`, `runs/*`).
+- Keep code execution in a sandbox runner (CodeBuild/ECS), not in Lambda.
