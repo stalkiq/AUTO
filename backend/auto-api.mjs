@@ -24,7 +24,7 @@ import { CloudFrontClient, CreateInvalidationCommand } from "@aws-sdk/client-clo
 import { LambdaClient, UpdateFunctionConfigurationCommand, GetFunctionConfigurationCommand } from "@aws-sdk/client-lambda";
 
 const REGION = process.env.AWS_REGION || "us-east-1";
-const MODEL_ID = process.env.NOVA_MODEL_ID || "nova-lite-v1";
+const MODEL_ID = process.env.NOVA_MODEL_ID || "amazon.nova-lite-v1:0";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 const WORKSPACE_BUCKET = process.env.WORKSPACE_BUCKET || "";
 const RUNS_TABLE = process.env.RUNS_TABLE || "";
@@ -115,12 +115,14 @@ async function chat(messages) {
   if (!userText) return { reply: "messages[] required" };
 
   const payload = {
+    system: [{ text: "You are AUTO, an AWS-only app-building assistant. You help users build applications, automate AWS operations, and manage their cloud infrastructure. Be concise and action-oriented. When the user asks to perform an AWS action, explain which write operation they can use from the control panel (s3_put_object, s3_delete_object, cloudfront_invalidate, dynamodb_put_item, lambda_update_env)." }],
     messages: [
-      { role: "system", content: "You are AUTO, an AWS-only app-building assistant. Be concise and action-oriented." },
-      { role: "user", content: userText },
+      { role: "user", content: [{ text: userText }] },
     ],
-    temperature: 0.25,
-    maxTokens: 900,
+    inferenceConfig: {
+      temperature: 0.25,
+      max_new_tokens: 900,
+    },
   };
 
   const cmd = new InvokeModelCommand({
@@ -361,43 +363,46 @@ async function awsExecute(body) {
 
 export const handler = async (event) => {
   const origin = event?.headers?.origin || event?.headers?.Origin || "*";
-  const method = String(event?.httpMethod || "GET").toUpperCase();
-  const path = String(event?.path || event?.rawPath || "/");
+  const method = String(event?.requestContext?.http?.method || event?.httpMethod || "GET").toUpperCase();
+  const path = String(event?.rawPath || event?.path || "/");
+  const body = typeof event?.body === "string" && event?.isBase64Encoded
+    ? Buffer.from(event.body, "base64").toString("utf-8")
+    : event?.body;
 
   if (method === "OPTIONS") return json(200, { ok: true }, origin);
   if (requiresAuth(path) && !isAuthorized(event)) return json(401, { error: "Unauthorized" }, origin);
 
   try {
     if (method === "POST" && path.endsWith("/chat")) {
-      const body = parseJson(event?.body);
-      return json(200, await chat(body?.messages || []), origin);
+      const parsed = parseJson(body);
+      return json(200, await chat(parsed?.messages || []), origin);
     }
     if (method === "POST" && path.endsWith("/workspace/create")) {
       return json(200, await workspaceCreate(), origin);
     }
     if (method === "POST" && path.endsWith("/workspace/patch")) {
-      const body = parseJson(event?.body);
-      return json(200, await workspacePatch(body), origin);
+      const parsed = parseJson(body);
+      return json(200, await workspacePatch(parsed), origin);
     }
     if (method === "GET" && path.endsWith("/workspace/list")) {
       const qs = event?.queryStringParameters || {};
       return json(200, await workspaceList(String(qs.workspaceId || "")), origin);
     }
     if (method === "POST" && path.endsWith("/runs/start")) {
-      const body = parseJson(event?.body);
-      return json(200, await runsStart(body), origin);
+      const parsed = parseJson(body);
+      return json(200, await runsStart(parsed), origin);
     }
     if (method === "GET" && path.endsWith("/runs/status")) {
       const qs = event?.queryStringParameters || {};
       return json(200, await runsStatus(String(qs.runId || "")), origin);
     }
     if (method === "POST" && path.endsWith("/aws/validate")) {
-      const body = parseJson(event?.body);
-      return json(200, await awsValidate(body), origin);
+      const parsed = parseJson(body);
+      return json(200, await awsValidate(parsed), origin);
     }
     if (method === "POST" && path.endsWith("/aws/execute")) {
-      const body = parseJson(event?.body);
-      return json(200, await awsExecute(body), origin);
+      const parsed = parseJson(body);
+      return json(200, await awsExecute(parsed), origin);
     }
     return json(404, { error: "Route not found" }, origin);
   } catch (e) {

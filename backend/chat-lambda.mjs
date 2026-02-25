@@ -4,7 +4,7 @@
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
 
 const REGION = process.env.AWS_REGION || "us-east-1";
-const MODEL_ID = process.env.NOVA_MODEL_ID || "nova-lite-v1";
+const MODEL_ID = process.env.NOVA_MODEL_ID || "amazon.nova-lite-v1:0";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 
 function json(statusCode, body, origin) {
@@ -50,17 +50,19 @@ export const handler = async (event) => {
     return json(400, { error: "messages[] required" }, originHeader);
   }
 
-  const system = "You are AUTO, an application-building assistant. Be concise. Propose a plan, then the next actionable step.";
+  const systemPrompt = "You are AUTO, an application-building assistant. Be concise. Propose a plan, then the next actionable step.";
 
   const client = new BedrockRuntimeClient({ region: REGION });
 
   const payload = {
+    system: [{ text: systemPrompt }],
     messages: [
-      { role: "system", content: system },
-      { role: "user", content: userText },
+      { role: "user", content: [{ text: userText }] },
     ],
-    temperature: 0.3,
-    maxTokens: 700,
+    inferenceConfig: {
+      temperature: 0.3,
+      max_new_tokens: 700,
+    },
   };
 
   try {

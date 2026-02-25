@@ -1,4 +1,6 @@
 (function () {
+  const DEFAULT_API_BASE = "https://pxiaathir6.execute-api.us-east-1.amazonaws.com";
+
   const STORAGE = {
     apiBase: "auto:apiBase",
     awsRegion: "auto:awsRegion",
@@ -37,7 +39,7 @@
   let cachedAwsIdentity = null;
 
   function getApiBase() {
-    return (localStorage.getItem(STORAGE.apiBase) || "").trim();
+    return (localStorage.getItem(STORAGE.apiBase) || DEFAULT_API_BASE).trim();
   }
 
   function setApiBase(v) {
