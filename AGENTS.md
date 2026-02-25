@@ -49,3 +49,32 @@ aws cloudfront create-invalidation --distribution-id E31YIXNNRC4RYX --paths "/*"
 ```
 
 Requires `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` secrets with S3 + CloudFront permissions.
+
+### Live backend (Lambda + API Gateway)
+
+- **API Gateway:** `https://pxiaathir6.execute-api.us-east-1.amazonaws.com` (HTTP API, id: `pxiaathir6`)
+- **Lambda function:** `auto-api` (Node.js 20, handler: `auto-api.handler`)
+- **IAM role:** `auto-lambda-role`
+- **DynamoDB table:** `auto-runs` (partition key: `runId`)
+- **Workspace bucket:** `auto-workspaces-016442247702-us-east-1`
+- **Bedrock model:** `amazon.nova-lite-v1:0` (Nova Lite)
+
+To redeploy backend changes:
+```sh
+cd backend && rm -rf /tmp/lambda-pkg /tmp/auto-api-lambda.zip
+mkdir -p /tmp/lambda-pkg && cp -r node_modules *.mjs package.json /tmp/lambda-pkg/
+cd /tmp/lambda-pkg && zip -qr /tmp/auto-api-lambda.zip .
+aws lambda update-function-code --function-name auto-api --zip-file fileb:///tmp/auto-api-lambda.zip
+```
+
+### Nova Bedrock API format
+
+The Nova model requires a specific payload format different from other models:
+- System prompt goes in a top-level `system` array: `[{ "text": "..." }]`
+- Message content is an array: `[{ "text": "..." }]`
+- Inference config uses `max_new_tokens` (not `maxTokens`) inside an `inferenceConfig` object
+
+### Important: do NOT modify
+
+- Any existing CloudFront distributions other than `E31YIXNNRC4RYX` (the AUTO frontend)
+- Any existing S3 buckets, Lambda functions, or other AWS resources not prefixed with `auto-`
