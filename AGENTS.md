@@ -29,6 +29,7 @@ import('./backend/auto-api.mjs').then(async (m) => {
 
 - The `POST /chat` route requires real AWS credentials with Bedrock `bedrock:InvokeModel` permission. Without them, the handler returns `500 Could not load credentials from any providers`.
 - Routes that depend on S3 (`/workspace/patch`, `/workspace/list`) or DynamoDB (`/runs/start`) will fail without configured `WORKSPACE_BUCKET` / `RUNS_TABLE` env vars pointing at real AWS resources. However, `/workspace/create` succeeds even without a bucket (it skips the S3 call), and `/runs/status` returns a graceful fallback.
+- `POST /aws/validate` and `POST /aws/execute` use **caller-provided** AWS credentials (not server env). They require auth if `AUTO_ADMIN_TOKEN` is set. `/aws/execute` supports an allowlisted set of operations: `s3_put_object`, `s3_delete_object`, `cloudfront_invalidate`, `dynamodb_put_item`, `lambda_update_env`.
 - There is **no test suite, no linter config, and no build step** in this scaffold. Code quality checks must be done manually or by adding tooling.
 - Environment variables are documented in `.env.example`. For Lambda deployment, set them as Lambda environment variables per `infra/DEPLOY_NOTES.md`.
 - All backend files are `.mjs` (ESM). The `package.json` has `"type": "module"`.
