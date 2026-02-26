@@ -1,423 +1,543 @@
 (function () {
-  const DEFAULT_API_BASE = "https://pxiaathir6.execute-api.us-east-1.amazonaws.com";
-
-  const STORAGE = {
-    apiBase: "auto:apiBase",
-    awsRegion: "auto:awsRegion",
-    awsAccessKey: "auto:awsAccessKey",
-    awsSecretKey: "auto:awsSecretKey",
-    awsSessionToken: "auto:awsSessionToken",
-  };
+  const API = "https://pxiaathir6.execute-api.us-east-1.amazonaws.com";
+  const WS_PREVIEW = "http://auto-workspaces-016442247702-us-east-1.s3-website-us-east-1.amazonaws.com/workspaces/";
+  const STORE = (k) => localStorage.getItem(k) || "";
+  const SAVE = (k, v) => localStorage.setItem(k, v || "");
 
   const $ = (id) => document.getElementById(id);
-
-  const chatEl = $("chat");
-  const promptEl = $("prompt");
-  const sendBtn = $("send");
-  const clearBtn = $("clear");
-  const togglePanelBtn = $("togglePanel");
+  const tabsEl = $("tabs");
+  const contentEl = $("tabContent");
+  const addTabBtn = $("addTab");
+  const newTabMenu = $("newTabMenu");
   const sidePanel = $("sidePanel");
+  const togglePanelBtn = $("togglePanel");
   const awsBadge = $("awsBadge");
-  const githubBtn = $("githubBtn");
-  const githubPushBtn = $("githubPushBtn");
-  const imageGenBtn = $("imageGenBtn");
-  const imageUpload = $("imageUpload");
-  const githubTokenEl = $("githubToken");
-
-  const awsAccessKeyEl = $("awsAccessKey");
-  const awsSecretKeyEl = $("awsSecretKey");
-  const awsSessionTokenEl = $("awsSessionToken");
-  const awsRegionEl = $("awsRegion");
-  const validateAwsBtn = $("validateAws");
-  const awsStatusMsgEl = $("awsStatusMsg");
-
-  const executeAwsBtn = $("executeAws");
-  const operationEl = $("operation");
-  const actionFormEl = $("actionForm");
-  const actionResultEl = $("actionResult");
   const runLogEl = $("runLog");
 
-  function getApiBase() {
-    return (localStorage.getItem(STORAGE.apiBase) || DEFAULT_API_BASE).trim();
-  }
+  let tabs = [];
+  let activeId = null;
+  let tabCounter = 0;
 
-  // --- Message rendering ---
-  function addMsg(role, text, extra) {
-    const div = document.createElement("div");
-    div.className = "msg " + role;
-
-    const roleEl = document.createElement("div");
-    roleEl.className = "role";
-    roleEl.textContent = role;
-
-    const textEl = document.createElement("div");
-    textEl.className = "text";
-    textEl.textContent = text;
-
-    div.appendChild(roleEl);
-    div.appendChild(textEl);
-
-    if (extra?.image) {
-      const img = document.createElement("img");
-      img.src = "data:image/png;base64," + extra.image;
-      img.className = "msg-image";
-      img.alt = "Generated image";
-      div.appendChild(img);
-    }
-
-    if (role === "assistant" && text && text.length > 10) {
-      const speakBtn = document.createElement("button");
-      speakBtn.className = "speak-btn";
-      speakBtn.textContent = "\u{1F50A}";
-      speakBtn.title = "Read aloud (Polly)";
-      speakBtn.onclick = () => speakText(text, speakBtn);
-      div.appendChild(speakBtn);
-    }
-
-    chatEl.appendChild(div);
-    chatEl.scrollTop = chatEl.scrollHeight;
-    return div;
-  }
-
-  function addLoading(label) {
-    const div = document.createElement("div");
-    div.className = "msg assistant loading";
-    div.innerHTML = '<div class="role">assistant</div><div class="text">' + (label || "Thinking...") + '</div>';
-    chatEl.appendChild(div);
-    chatEl.scrollTop = chatEl.scrollHeight;
-    return div;
-  }
-
-  function log(text) {
+  function log(t) {
     const now = new Date().toLocaleTimeString();
-    runLogEl.textContent += "[" + now + "] " + text + "\n";
+    runLogEl.textContent += "[" + now + "] " + t + "\n";
     runLogEl.scrollTop = runLogEl.scrollHeight;
   }
 
-  function getAwsCredentials() {
-    return {
-      accessKeyId: (awsAccessKeyEl.value || "").trim(),
-      secretAccessKey: (awsSecretKeyEl.value || "").trim(),
-      sessionToken: (awsSessionTokenEl.value || "").trim(),
-      region: (awsRegionEl.value || "us-east-1").trim(),
-    };
-  }
-
-  function storeAwsInputs() {
-    localStorage.setItem(STORAGE.awsAccessKey, awsAccessKeyEl.value || "");
-    localStorage.setItem(STORAGE.awsSecretKey, awsSecretKeyEl.value || "");
-    localStorage.setItem(STORAGE.awsSessionToken, awsSessionTokenEl.value || "");
-    localStorage.setItem(STORAGE.awsRegion, awsRegionEl.value || "us-east-1");
-  }
-
-  async function apiCall(path, payload) {
-    const apiBase = getApiBase();
-    const res = await fetch(apiBase.replace(/\/$/, "") + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload || {}),
+  async function api(path, payload) {
+    const res = await fetch(API + path, {
+      method: payload !== undefined ? "POST" : "GET",
+      headers: payload !== undefined ? { "Content-Type": "application/json" } : {},
+      body: payload !== undefined ? JSON.stringify(payload) : undefined,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
     return data;
   }
 
-  // --- Polly TTS ---
+  async function apiGet(path) {
+    const res = await fetch(API + path);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
+    return data;
+  }
+
+  // ==================== TAB MANAGEMENT ====================
+  function createTab(type, title) {
+    tabCounter++;
+    const id = "tab_" + tabCounter + "_" + Date.now();
+    const tab = {
+      id, type,
+      title: title || (type === "assistant" ? "Assistant " + tabCounter : "Repo " + tabCounter),
+      messages: [],
+      workspaceId: null,
+      files: [],
+      openFile: null,
+      editorContent: "",
+      dirty: false,
+    };
+    if (type === "assistant") {
+      tab.messages = [{ role: "assistant", text: "Hi! I'm AUTO \u2014 your AI builder.\n\nChat, generate images, analyze repos, or push to GitHub." }];
+    }
+    tabs.push(tab);
+    renderTabs();
+    switchTab(id);
+    return tab;
+  }
+
+  function removeTab(id) {
+    tabs = tabs.filter((t) => t.id !== id);
+    if (activeId === id) {
+      activeId = tabs.length ? tabs[tabs.length - 1].id : null;
+    }
+    renderTabs();
+    renderContent();
+    if (!tabs.length) createTab("assistant");
+  }
+
+  function switchTab(id) {
+    activeId = id;
+    renderTabs();
+    renderContent();
+  }
+
+  function getTab(id) { return tabs.find((t) => t.id === (id || activeId)); }
+
+  function renderTabs() {
+    tabsEl.innerHTML = "";
+    tabs.forEach((t) => {
+      const el = document.createElement("div");
+      el.className = "tab" + (t.id === activeId ? " active" : "");
+      const icon = t.type === "assistant" ? "\uD83E\uDD16" : "\uD83D\uDCC1";
+      el.innerHTML =
+        '<span class="tab-icon">' + icon + '</span>' +
+        '<span class="tab-label">' + t.title + '</span>' +
+        '<button class="tab-close">\u00D7</button>';
+      el.querySelector(".tab-close").onclick = (e) => { e.stopPropagation(); removeTab(t.id); };
+      el.onclick = () => switchTab(t.id);
+      tabsEl.appendChild(el);
+    });
+  }
+
+  // ==================== RENDER CONTENT ====================
+  function renderContent() {
+    const tab = getTab();
+    contentEl.innerHTML = "";
+    if (!tab) { contentEl.innerHTML = '<div class="editor-empty">Click + to open a tab</div>'; return; }
+    if (tab.type === "assistant") renderAssistant(tab);
+    else renderRepo(tab);
+  }
+
+  // ==================== ASSISTANT TAB ====================
+  function renderAssistant(tab) {
+    const view = document.createElement("div");
+    view.className = "assistant-view";
+
+    const chat = document.createElement("div");
+    chat.className = "chat";
+    chat.id = "chat_" + tab.id;
+    tab.messages.forEach((m) => appendMsg(chat, m.role, m.text, m.extra));
+    view.appendChild(chat);
+
+    const tools = document.createElement("div");
+    tools.className = "tools-bar";
+    const toolDefs = [
+      { label: "GitHub Analyze", fn: () => onGitHub(tab) },
+      { label: "GitHub Push", fn: () => onGitHubPush(tab) },
+      { label: "Image", fn: () => onImageGen(tab) },
+    ];
+    toolDefs.forEach((td) => {
+      const b = document.createElement("button");
+      b.className = "tool-btn";
+      b.textContent = td.label;
+      b.onclick = td.fn;
+      tools.appendChild(b);
+    });
+    const analyzeLabel = document.createElement("label");
+    analyzeLabel.className = "tool-btn";
+    analyzeLabel.textContent = "Analyze";
+    const fileIn = document.createElement("input");
+    fileIn.type = "file"; fileIn.accept = "image/*"; fileIn.hidden = true;
+    fileIn.onchange = (e) => { if (e.target.files[0]) onImageUpload(tab, e.target.files[0]); e.target.value = ""; };
+    analyzeLabel.appendChild(fileIn);
+    tools.appendChild(analyzeLabel);
+    view.appendChild(tools);
+
+    const composer = document.createElement("div");
+    composer.className = "composer";
+    const textarea = document.createElement("textarea");
+    textarea.rows = 2;
+    textarea.placeholder = "Ask AUTO anything... (Ctrl+Enter)";
+    textarea.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); onSend(tab, textarea); } };
+    composer.appendChild(textarea);
+    const actions = document.createElement("div");
+    actions.className = "composer-actions";
+    const sendBtn = document.createElement("button");
+    sendBtn.className = "btn";
+    sendBtn.textContent = "Send";
+    sendBtn.onclick = () => onSend(tab, textarea);
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "btn-sm secondary";
+    clearBtn.textContent = "Clear";
+    clearBtn.onclick = () => { tab.messages = [{ role: "assistant", text: "Chat cleared. Ask me anything!" }]; renderContent(); };
+    actions.appendChild(sendBtn);
+    actions.appendChild(clearBtn);
+    composer.appendChild(actions);
+    view.appendChild(composer);
+
+    contentEl.appendChild(view);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function appendMsg(container, role, text, extra) {
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    const r = document.createElement("div"); r.className = "role"; r.textContent = role;
+    const t = document.createElement("div"); t.className = "text"; t.textContent = text;
+    div.appendChild(r); div.appendChild(t);
+    if (extra?.image) {
+      const img = document.createElement("img");
+      img.src = "data:image/png;base64," + extra.image;
+      img.className = "msg-image";
+      div.appendChild(img);
+    }
+    if (role === "assistant" && text && text.length > 15) {
+      const sb = document.createElement("button");
+      sb.className = "speak-btn"; sb.textContent = "\uD83D\uDD0A"; sb.title = "Read aloud";
+      sb.onclick = () => speakText(text, sb);
+      div.appendChild(sb);
+    }
+    container.appendChild(div);
+    return div;
+  }
+
+  function addMsgToTab(tab, role, text, extra) {
+    tab.messages.push({ role, text, extra });
+    const chat = document.getElementById("chat_" + tab.id);
+    if (chat) {
+      appendMsg(chat, role, text, extra);
+      chat.scrollTop = chat.scrollHeight;
+    }
+  }
+
+  function addLoader(tab, label) {
+    const chat = document.getElementById("chat_" + tab.id);
+    if (!chat) return { remove: () => {} };
+    const div = document.createElement("div");
+    div.className = "msg assistant loading";
+    div.innerHTML = '<div class="role">assistant</div><div class="text">' + (label || "Thinking...") + '</div>';
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  // ==================== REPO TAB ====================
+  function renderRepo(tab) {
+    const view = document.createElement("div");
+    view.className = "repo-view";
+
+    const sidebar = document.createElement("div");
+    sidebar.className = "repo-sidebar";
+    const header = document.createElement("div");
+    header.className = "repo-header";
+    header.innerHTML = '<div class="repo-title">' + tab.title + '</div>' +
+      '<div class="repo-id">' + (tab.workspaceId || "Creating...") + '</div>';
+    const ra = document.createElement("div");
+    ra.className = "repo-actions";
+    const newFileBtn = document.createElement("button");
+    newFileBtn.className = "btn-sm"; newFileBtn.textContent = "+ File";
+    newFileBtn.onclick = () => onNewFile(tab);
+    const previewBtn = document.createElement("button");
+    previewBtn.className = "btn-sm secondary"; previewBtn.textContent = "Preview";
+    previewBtn.onclick = () => {
+      if (tab.workspaceId) window.open(WS_PREVIEW + tab.workspaceId + "/", "_blank");
+    };
+    const refreshBtn = document.createElement("button");
+    refreshBtn.className = "btn-sm secondary"; refreshBtn.textContent = "\u21BB";
+    refreshBtn.onclick = () => loadFiles(tab);
+    ra.appendChild(newFileBtn); ra.appendChild(previewBtn); ra.appendChild(refreshBtn);
+    header.appendChild(ra);
+    sidebar.appendChild(header);
+
+    const fileList = document.createElement("div");
+    fileList.className = "file-list";
+    fileList.id = "files_" + tab.id;
+    tab.files.forEach((f) => {
+      const item = document.createElement("div");
+      item.className = "file-item" + (f === tab.openFile ? " active" : "");
+      item.innerHTML = '<span class="fi-icon">\uD83D\uDCC4</span>' + f;
+      item.onclick = () => openFile(tab, f);
+      fileList.appendChild(item);
+    });
+    sidebar.appendChild(fileList);
+    view.appendChild(sidebar);
+
+    const main = document.createElement("div");
+    main.className = "repo-main";
+    if (tab.openFile) {
+      const eh = document.createElement("div");
+      eh.className = "editor-header";
+      eh.innerHTML = '<span class="editor-path">' + tab.openFile + '</span>';
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "btn-sm";
+      saveBtn.textContent = tab.dirty ? "Save *" : "Save";
+      saveBtn.onclick = () => saveFile(tab);
+      eh.appendChild(saveBtn);
+      main.appendChild(eh);
+
+      const editor = document.createElement("textarea");
+      editor.className = "editor-area";
+      editor.value = tab.editorContent || "";
+      editor.spellcheck = false;
+      editor.onkeydown = (e) => {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const s = editor.selectionStart;
+          editor.value = editor.value.substring(0, s) + "  " + editor.value.substring(editor.selectionEnd);
+          editor.selectionStart = editor.selectionEnd = s + 2;
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); tab.editorContent = editor.value; saveFile(tab); }
+      };
+      editor.oninput = () => { tab.editorContent = editor.value; tab.dirty = true; };
+      main.appendChild(editor);
+    } else {
+      main.innerHTML = '<div class="editor-empty">Select a file or click "+ File" to create one</div>';
+    }
+    view.appendChild(main);
+    contentEl.appendChild(view);
+
+    if (!tab.workspaceId) initWorkspace(tab);
+  }
+
+  async function initWorkspace(tab) {
+    try {
+      const out = await api("/workspace/create", {});
+      tab.workspaceId = out.workspaceId;
+      log("Workspace: " + tab.workspaceId);
+      renderContent();
+    } catch (e) { log("Workspace error: " + (e?.message || "")); }
+  }
+
+  async function loadFiles(tab) {
+    if (!tab.workspaceId) return;
+    try {
+      const out = await apiGet("/workspace/list?workspaceId=" + tab.workspaceId);
+      tab.files = out.files || [];
+      renderContent();
+    } catch (e) { log("File list error: " + (e?.message || "")); }
+  }
+
+  async function openFile(tab, filePath) {
+    tab.openFile = filePath;
+    tab.dirty = false;
+    try {
+      const out = await apiGet("/workspace/read?workspaceId=" + tab.workspaceId + "&filePath=" + encodeURIComponent(filePath));
+      tab.editorContent = out.content || "";
+    } catch (e) {
+      tab.editorContent = "// Error loading file: " + (e?.message || "");
+    }
+    renderContent();
+  }
+
+  async function saveFile(tab) {
+    if (!tab.openFile || !tab.workspaceId) return;
+    try {
+      const ct = tab.openFile.endsWith(".html") ? "text/html; charset=utf-8"
+        : tab.openFile.endsWith(".css") ? "text/css; charset=utf-8"
+        : tab.openFile.endsWith(".js") ? "application/javascript; charset=utf-8"
+        : "text/plain; charset=utf-8";
+      await api("/workspace/patch", {
+        workspaceId: tab.workspaceId,
+        filePath: tab.openFile,
+        content: tab.editorContent,
+      });
+      tab.dirty = false;
+      log("Saved: " + tab.openFile);
+      renderContent();
+    } catch (e) { log("Save error: " + (e?.message || "")); }
+  }
+
+  function onNewFile(tab) {
+    const name = prompt("File name (e.g. index.html):");
+    if (!name) return;
+    tab.files.push(name.trim());
+    tab.openFile = name.trim();
+    tab.editorContent = "";
+    tab.dirty = true;
+    renderContent();
+  }
+
+  // ==================== ASSISTANT ACTIONS ====================
+  async function onSend(tab, textarea) {
+    const text = (textarea.value || "").trim();
+    if (!text) return;
+    addMsgToTab(tab, "user", text);
+    textarea.value = "";
+    const loader = addLoader(tab);
+    try {
+      const out = await api("/chat", { messages: [{ role: "user", content: text }] });
+      loader.remove();
+      addMsgToTab(tab, "assistant", out.reply || "(no reply)");
+    } catch (e) {
+      loader.remove();
+      addMsgToTab(tab, "assistant", "Error: " + (e?.message || ""));
+    }
+  }
+
   let currentAudio = null;
   async function speakText(text, btn) {
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-    const orig = btn.textContent;
-    btn.textContent = "\u23F3";
-    btn.disabled = true;
+    const orig = btn.textContent; btn.textContent = "\u23F3"; btn.disabled = true;
     try {
-      const out = await apiCall("/chat/speak", { text });
+      const out = await api("/chat/speak", { text });
       if (out.audio) {
-        const audio = new Audio("data:audio/mpeg;base64," + out.audio);
-        currentAudio = audio;
-        audio.play();
-        btn.textContent = "\u23F9";
-        audio.onended = () => { btn.textContent = orig; currentAudio = null; };
-        audio.onerror = () => { btn.textContent = orig; currentAudio = null; };
+        const a = new Audio("data:audio/mpeg;base64," + out.audio);
+        currentAudio = a; a.play(); btn.textContent = "\u23F9";
+        a.onended = () => { btn.textContent = orig; currentAudio = null; };
       }
-    } catch (e) {
-      log("Polly error: " + (e?.message || ""));
-    } finally {
-      btn.disabled = false;
-      if (btn.textContent === "\u23F3") btn.textContent = orig;
-    }
+    } catch (e) { log("Polly: " + (e?.message || "")); }
+    finally { btn.disabled = false; if (btn.textContent === "\u23F3") btn.textContent = orig; }
   }
 
-  // --- Chat ---
-  async function onSend() {
-    const text = (promptEl.value || "").trim();
-    if (!text) return;
-    addMsg("user", text);
-    promptEl.value = "";
-    sendBtn.disabled = true;
-    const loader = addLoading();
+  async function onGitHub(tab) {
+    const url = prompt("GitHub repo URL:");
+    if (!url) return;
+    addMsgToTab(tab, "user", "Analyze: " + url.trim());
+    const loader = addLoader(tab, "Analyzing repo...");
     try {
-      const out = await apiCall("/chat", { messages: [{ role: "user", content: text }] });
+      const out = await api("/github/analyze", { url: url.trim() });
       loader.remove();
-      addMsg("assistant", out.reply || "(no reply)");
-    } catch (e) {
-      loader.remove();
-      addMsg("assistant", "Error: " + (e?.message || String(e)));
-      log("Chat error: " + (e?.message || ""));
-    } finally {
-      sendBtn.disabled = false;
-      promptEl.focus();
-    }
+      addMsgToTab(tab, "assistant", out.repo + " (" + out.language + ", " + out.fileCount + " files)\n\n" + out.analysis);
+    } catch (e) { loader.remove(); addMsgToTab(tab, "assistant", "Error: " + (e?.message || "")); }
   }
 
-  // --- GitHub analyze ---
-  async function onGitHub() {
-    const url = prompt("Paste a GitHub repository URL:");
-    if (!url || !url.trim()) return;
-    addMsg("user", "Analyze this repo: " + url.trim());
-    const loader = addLoading("Analyzing GitHub repository...");
+  async function onGitHubPush(tab) {
+    const token = ($("githubToken").value || STORE("auto:githubToken")).trim();
+    if (!token) { addMsgToTab(tab, "assistant", "Add your GitHub token in Settings first."); return; }
+    SAVE("auto:githubToken", token);
+    const repo = prompt("Repo URL:"); if (!repo) return;
+    const fp = prompt("File path:"); if (!fp) return;
+    const content = prompt("Content:"); if (content === null) return;
+    const msg = prompt("Commit message:", "Update via AUTO") || "Update via AUTO";
+    addMsgToTab(tab, "user", "Push: " + fp);
+    const loader = addLoader(tab, "Pushing...");
     try {
-      const out = await apiCall("/github/analyze", { url: url.trim() });
+      const out = await api("/github/push", { token, repo, path: fp, content, message: msg });
       loader.remove();
-      const header = out.repo + " (" + out.language + ", " + out.stars + " stars, " + out.fileCount + " files)\n\n";
-      addMsg("assistant", header + out.analysis);
-      log("GitHub analyzed: " + out.repo);
-    } catch (e) {
-      loader.remove();
-      addMsg("assistant", "GitHub error: " + (e?.message || String(e)));
-      log("GitHub error: " + (e?.message || ""));
-    }
+      addMsgToTab(tab, "assistant", "Pushed!\n" + out.repo + "/" + out.path + " (" + out.branch + ")\n" + out.htmlUrl);
+    } catch (e) { loader.remove(); addMsgToTab(tab, "assistant", "Push failed: " + (e?.message || "")); }
   }
 
-  // --- GitHub push ---
-  async function onGitHubPush() {
-    const token = (githubTokenEl.value || localStorage.getItem("auto:githubToken") || "").trim();
-    if (!token) {
-      addMsg("assistant", "You need a GitHub token to push files.\n\n1. Click \"Settings\" in the top right\n2. Paste your GitHub Personal Access Token\n3. Then click \"GitHub Push\" again\n\nGet a token at: https://github.com/settings/tokens");
-      return;
-    }
-    localStorage.setItem("auto:githubToken", token);
-
-    const repo = prompt("GitHub repo URL (e.g. https://github.com/you/repo):");
-    if (!repo) return;
-    const filePath = prompt("File path to create/update (e.g. src/index.js):");
-    if (!filePath) return;
-    const content = prompt("File content (or paste your code):");
-    if (content === null) return;
-    const message = prompt("Commit message:", "Update via AUTO") || "Update via AUTO";
-
-    addMsg("user", "Push to " + repo + ": " + filePath);
-    const loader = addLoading("Pushing to GitHub...");
+  async function onImageGen(tab) {
+    const desc = prompt("Describe the image:"); if (!desc) return;
+    addMsgToTab(tab, "user", "Generate: " + desc.trim());
+    const loader = addLoader(tab, "Generating...");
     try {
-      const out = await apiCall("/github/push", { token, repo, path: filePath, content, message });
+      const out = await api("/image/generate", { prompt: desc.trim() });
       loader.remove();
-      addMsg("assistant", "Pushed successfully!\n\nRepo: " + out.repo + "\nFile: " + out.path + "\nBranch: " + out.branch + "\nCommit: " + out.sha.slice(0, 7) + "\n\nView: " + out.htmlUrl);
-      log("GitHub push: " + out.path + " -> " + out.repo);
-    } catch (e) {
-      loader.remove();
-      addMsg("assistant", "Push failed: " + (e?.message || String(e)));
-      log("GitHub push error: " + (e?.message || ""));
-    }
+      if (out.image) addMsgToTab(tab, "assistant", "Generated image:", { image: out.image });
+      else addMsgToTab(tab, "assistant", "Failed: " + (out.error || ""));
+    } catch (e) { loader.remove(); addMsgToTab(tab, "assistant", "Error: " + (e?.message || "")); }
   }
 
-  // --- Image generation ---
-  async function onImageGen() {
-    const desc = prompt("Describe the image you want to generate:");
-    if (!desc || !desc.trim()) return;
-    addMsg("user", "Generate image: " + desc.trim());
-    const loader = addLoading("Generating image with Nova Canvas...");
-    try {
-      const out = await apiCall("/image/generate", { prompt: desc.trim() });
-      loader.remove();
-      if (out.image) {
-        addMsg("assistant", "Here's your generated image:", { image: out.image });
-      } else {
-        addMsg("assistant", "Image generation failed: " + (out.error || "unknown"));
-      }
-      log("Image generated");
-    } catch (e) {
-      loader.remove();
-      addMsg("assistant", "Image error: " + (e?.message || String(e)));
-      log("Image gen error: " + (e?.message || ""));
-    }
-  }
-
-  // --- Image analysis ---
-  async function onImageUpload(file) {
-    if (!file) return;
+  async function onImageUpload(tab, file) {
     const reader = new FileReader();
     reader.onload = async () => {
       const b64 = reader.result.split(",")[1];
-      const preview = document.createElement("img");
-      preview.src = reader.result;
-      preview.className = "msg-image";
-
-      const userDiv = addMsg("user", "Analyze this image:");
-      userDiv.appendChild(preview);
-
-      const loader = addLoading("Analyzing image with Nova...");
+      addMsgToTab(tab, "user", "Analyze uploaded image");
+      const loader = addLoader(tab, "Analyzing...");
       try {
-        const out = await apiCall("/image/analyze", { image: b64 });
+        const out = await api("/image/analyze", { image: b64 });
         loader.remove();
-        addMsg("assistant", out.analysis || "(no analysis)");
-        log("Image analyzed");
-      } catch (e) {
-        loader.remove();
-        addMsg("assistant", "Analysis error: " + (e?.message || String(e)));
-        log("Image analysis error: " + (e?.message || ""));
-      }
+        addMsgToTab(tab, "assistant", out.analysis || "No analysis");
+      } catch (e) { loader.remove(); addMsgToTab(tab, "assistant", "Error: " + (e?.message || "")); }
     };
     reader.readAsDataURL(file);
   }
 
-  // --- AWS Validate ---
-  async function onValidateAws() {
-    validateAwsBtn.disabled = true;
-    awsStatusMsgEl.textContent = "Connecting...";
-    awsStatusMsgEl.className = "status-msg";
-    try {
-      storeAwsInputs();
-      const creds = getAwsCredentials();
-      if (!creds.accessKeyId || !creds.secretAccessKey) throw new Error("Enter Access Key ID and Secret Access Key");
-      const out = await apiCall("/aws/validate", { awsCredentials: creds });
-      awsBadge.textContent = "AWS: " + (out?.identity?.account || "Connected");
-      awsBadge.className = "aws-badge connected";
-      awsStatusMsgEl.textContent = "Connected as " + (out?.identity?.arn || "unknown");
-      awsStatusMsgEl.className = "status-msg ok";
-      log("AWS connected: " + (out?.identity?.arn || ""));
-    } catch (e) {
-      awsBadge.textContent = "AWS: Failed";
-      awsBadge.className = "aws-badge disconnected";
-      awsStatusMsgEl.textContent = "Failed: " + (e?.message || String(e));
-      awsStatusMsgEl.className = "status-msg err";
-      log("AWS validate failed: " + (e?.message || ""));
-    } finally {
-      validateAwsBtn.disabled = false;
+  // ==================== SETTINGS PANEL ====================
+  function initSettings() {
+    $("awsAccessKey").value = STORE("auto:awsAccessKey");
+    $("awsSecretKey").value = STORE("auto:awsSecretKey");
+    $("awsSessionToken").value = STORE("auto:awsSessionToken");
+    $("awsRegion").value = STORE("auto:awsRegion") || "us-east-1";
+    $("githubToken").value = STORE("auto:githubToken");
+
+    togglePanelBtn.onclick = () => {
+      sidePanel.classList.toggle("hidden");
+      togglePanelBtn.textContent = sidePanel.classList.contains("hidden") ? "Settings" : "Close";
+    };
+
+    $("validateAws").onclick = async () => {
+      const btn = $("validateAws"); btn.disabled = true;
+      const creds = {
+        accessKeyId: $("awsAccessKey").value.trim(),
+        secretAccessKey: $("awsSecretKey").value.trim(),
+        sessionToken: $("awsSessionToken").value.trim(),
+        region: $("awsRegion").value.trim() || "us-east-1",
+      };
+      ["awsAccessKey", "awsSecretKey", "awsSessionToken", "awsRegion"].forEach((k) => SAVE("auto:" + k, $(k).value));
+      try {
+        const out = await api("/aws/validate", { awsCredentials: creds });
+        awsBadge.textContent = "AWS: " + (out?.identity?.account || "OK");
+        awsBadge.className = "aws-badge connected";
+        $("awsStatusMsg").textContent = out?.identity?.arn || "Connected";
+        $("awsStatusMsg").className = "status-msg ok";
+      } catch (e) {
+        awsBadge.className = "aws-badge disconnected"; awsBadge.textContent = "AWS: Failed";
+        $("awsStatusMsg").textContent = e?.message || "Failed";
+        $("awsStatusMsg").className = "status-msg err";
+      } finally { btn.disabled = false; }
+    };
+
+    const AF = {
+      s3_put_object: [{ key: "bucket", label: "Bucket" }, { key: "key", label: "Key" }, { key: "content", label: "Content", type: "textarea" }],
+      s3_delete_object: [{ key: "bucket", label: "Bucket" }, { key: "key", label: "Key" }],
+      cloudfront_invalidate: [{ key: "distributionId", label: "Distribution ID" }, { key: "paths", label: "Paths (comma)" }],
+      dynamodb_put_item: [{ key: "tableName", label: "Table" }, { key: "item", label: "Item JSON", type: "textarea" }],
+      lambda_update_env: [{ key: "functionName", label: "Function" }, { key: "environment", label: "Env JSON", type: "textarea" }],
+    };
+
+    function renderAF() {
+      const form = $("actionForm"); form.innerHTML = "";
+      (AF[$("operation").value] || []).forEach((f) => {
+        const l = document.createElement("label"); l.textContent = f.label; form.appendChild(l);
+        const el = document.createElement(f.type === "textarea" ? "textarea" : "input");
+        el.dataset.key = f.key; if (f.type === "textarea") el.rows = 2;
+        form.appendChild(el);
+      });
     }
+    $("operation").onchange = renderAF;
+    renderAF();
+
+    $("executeAws").onclick = async () => {
+      const btn = $("executeAws"); btn.disabled = true;
+      const creds = {
+        accessKeyId: $("awsAccessKey").value.trim(),
+        secretAccessKey: $("awsSecretKey").value.trim(),
+        sessionToken: $("awsSessionToken").value.trim(),
+        region: $("awsRegion").value.trim() || "us-east-1",
+      };
+      const op = $("operation").value;
+      const input = {};
+      $("actionForm").querySelectorAll("[data-key]").forEach((el) => {
+        const k = el.dataset.key; let v = (el.value || "").trim();
+        if (k === "paths") input[k] = v.split(",").map((s) => s.trim()).filter(Boolean);
+        else if (k === "item" || k === "environment") { try { input[k] = JSON.parse(v); } catch { input[k] = v; } }
+        else input[k] = v;
+      });
+      try {
+        const out = await api("/aws/execute", { awsCredentials: creds, operation: op, input });
+        $("actionResult").textContent = "OK"; $("actionResult").className = "status-msg ok";
+        log(op + ": done");
+      } catch (e) {
+        $("actionResult").textContent = e?.message || "Failed"; $("actionResult").className = "status-msg err";
+      } finally { btn.disabled = false; }
+    };
   }
 
-  // --- AWS Execute ---
-  const ACTION_FIELDS = {
-    s3_put_object: [
-      { key: "bucket", label: "Bucket name", placeholder: "my-bucket" },
-      { key: "key", label: "File path (key)", placeholder: "folder/file.txt" },
-      { key: "content", label: "File content", placeholder: "Hello world", type: "textarea" },
-    ],
-    s3_delete_object: [
-      { key: "bucket", label: "Bucket name", placeholder: "my-bucket" },
-      { key: "key", label: "File path (key)", placeholder: "folder/file.txt" },
-    ],
-    cloudfront_invalidate: [
-      { key: "distributionId", label: "Distribution ID", placeholder: "E1EXAMPLE" },
-      { key: "paths", label: "Paths (comma-separated)", placeholder: "/*" },
-    ],
-    dynamodb_put_item: [
-      { key: "tableName", label: "Table name", placeholder: "my-table" },
-      { key: "item", label: "Item (JSON)", placeholder: '{"pk":"id1","sk":"meta"}', type: "textarea" },
-    ],
-    lambda_update_env: [
-      { key: "functionName", label: "Function name", placeholder: "my-lambda" },
-      { key: "environment", label: "Env vars (JSON)", placeholder: '{"KEY":"value"}', type: "textarea" },
-    ],
+  // ==================== TAB MENU ====================
+  addTabBtn.onclick = (e) => {
+    const rect = addTabBtn.getBoundingClientRect();
+    newTabMenu.style.top = rect.bottom + 4 + "px";
+    newTabMenu.style.left = rect.left + "px";
+    newTabMenu.classList.toggle("hidden");
   };
 
-  function renderActionForm() {
-    const op = operationEl.value;
-    const fields = ACTION_FIELDS[op] || [];
-    actionFormEl.innerHTML = "";
-    actionResultEl.textContent = "";
-    fields.forEach((f) => {
-      const lbl = document.createElement("label");
-      lbl.textContent = f.label;
-      actionFormEl.appendChild(lbl);
-      const el = document.createElement(f.type === "textarea" ? "textarea" : "input");
-      el.placeholder = f.placeholder || "";
-      el.dataset.key = f.key;
-      if (f.type === "textarea") el.rows = 3;
-      actionFormEl.appendChild(el);
-    });
-  }
-
-  function getActionInput() {
-    const input = {};
-    actionFormEl.querySelectorAll("[data-key]").forEach((el) => {
-      const k = el.dataset.key;
-      let v = (el.value || "").trim();
-      if (k === "paths") {
-        input[k] = v.split(",").map((s) => s.trim()).filter(Boolean);
-      } else if (k === "item" || k === "environment") {
-        try { input[k] = JSON.parse(v); } catch { input[k] = v; }
-      } else {
-        input[k] = v;
-      }
-    });
-    return input;
-  }
-
-  async function onExecuteAws() {
-    executeAwsBtn.disabled = true;
-    actionResultEl.textContent = "Running...";
-    actionResultEl.className = "status-msg";
-    try {
-      storeAwsInputs();
-      const creds = getAwsCredentials();
-      if (!creds.accessKeyId || !creds.secretAccessKey) throw new Error("Connect AWS credentials first");
-      const operation = operationEl.value;
-      const input = getActionInput();
-      const out = await apiCall("/aws/execute", { awsCredentials: creds, operation, input });
-      actionResultEl.textContent = "Success!";
-      actionResultEl.className = "status-msg ok";
-      log(operation + ": OK");
-      addMsg("assistant", "Action completed: " + operation + "\n" + JSON.stringify(out, null, 2));
-    } catch (e) {
-      actionResultEl.textContent = "Failed: " + (e?.message || String(e));
-      actionResultEl.className = "status-msg err";
-      log("Execute failed: " + (e?.message || ""));
-    } finally {
-      executeAwsBtn.disabled = false;
-    }
-  }
-
-  function onClear() {
-    chatEl.innerHTML = "";
-    addMsg("assistant",
-      "Hi! I'm AUTO \u2014 your AI builder on AWS.\n\n" +
-      "Chat \u2014 Ask me anything, I'll respond with Nova AI\n" +
-      "\uD83D\uDD0A \u2014 Click the speaker icon on any response to hear it read aloud (Polly)\n" +
-      "GitHub \u2014 Paste a repo URL and I'll analyze the codebase\n" +
-      "Image \u2014 Describe an image and I'll generate it (Nova Canvas)\n" +
-      "Analyze \u2014 Upload a photo and I'll describe what I see\n\n" +
-      "For AWS write actions, click Settings in the top right."
-    );
-  }
-
-  function togglePanel() {
-    sidePanel.classList.toggle("hidden");
-    togglePanelBtn.textContent = sidePanel.classList.contains("hidden") ? "Settings" : "Close";
-  }
-
-  function restoreSavedInputs() {
-    awsAccessKeyEl.value = localStorage.getItem(STORAGE.awsAccessKey) || "";
-    awsSecretKeyEl.value = localStorage.getItem(STORAGE.awsSecretKey) || "";
-    awsSessionTokenEl.value = localStorage.getItem(STORAGE.awsSessionToken) || "";
-    awsRegionEl.value = localStorage.getItem(STORAGE.awsRegion) || "us-east-1";
-    githubTokenEl.value = localStorage.getItem("auto:githubToken") || "";
-  }
-
-  sendBtn.addEventListener("click", onSend);
-  clearBtn.addEventListener("click", onClear);
-  togglePanelBtn.addEventListener("click", togglePanel);
-  validateAwsBtn.addEventListener("click", onValidateAws);
-  executeAwsBtn.addEventListener("click", onExecuteAws);
-  operationEl.addEventListener("change", renderActionForm);
-  githubBtn.addEventListener("click", onGitHub);
-  githubPushBtn.addEventListener("click", onGitHubPush);
-  imageGenBtn.addEventListener("click", onImageGen);
-  imageUpload.addEventListener("change", (e) => { if (e.target.files[0]) onImageUpload(e.target.files[0]); e.target.value = ""; });
-  promptEl.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); onSend(); }
+  newTabMenu.querySelectorAll(".menu-item").forEach((item) => {
+    item.onclick = () => {
+      const type = item.dataset.type;
+      const name = type === "repo" ? prompt("Workspace name:", "My Project") : null;
+      createTab(type, name || undefined);
+      newTabMenu.classList.add("hidden");
+    };
   });
 
-  restoreSavedInputs();
-  renderActionForm();
-  onClear();
+  document.addEventListener("click", (e) => {
+    if (!newTabMenu.contains(e.target) && e.target !== addTabBtn) newTabMenu.classList.add("hidden");
+  });
+
+  // ==================== INIT ====================
+  initSettings();
+  createTab("assistant", "Assistant");
 })();

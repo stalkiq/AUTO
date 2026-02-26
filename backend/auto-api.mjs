@@ -11,7 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
-import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { CodeBuildClient, StartBuildCommand } from "@aws-sdk/client-codebuild";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
@@ -214,6 +214,15 @@ async function workspaceList(workspaceId) {
     .filter((k) => k && !k.endsWith("/.init"))
     .map((k) => k.replace(prefix, ""));
   return { workspaceId, files };
+}
+
+async function workspaceRead(workspaceId, filePath) {
+  if (!workspaceId || !filePath) throw new Error("workspaceId and filePath required");
+  if (!WORKSPACE_BUCKET) throw new Error("WORKSPACE_BUCKET not configured");
+  const key = `workspaces/${workspaceId}/${filePath.replace(/^\/+/, "")}`;
+  const out = await s3.send(new GetObjectCommand({ Bucket: WORKSPACE_BUCKET, Key: key }));
+  const content = await out.Body.transformToString();
+  return { workspaceId, filePath, content, contentType: out.ContentType || "text/plain" };
 }
 
 async function runsStart(body) {
@@ -634,6 +643,10 @@ export const handler = async (event) => {
     if (method === "GET" && path.endsWith("/workspace/list")) {
       const qs = event?.queryStringParameters || {};
       return json(200, await workspaceList(String(qs.workspaceId || "")), origin);
+    }
+    if (method === "GET" && path.endsWith("/workspace/read")) {
+      const qs = event?.queryStringParameters || {};
+      return json(200, await workspaceRead(String(qs.workspaceId || ""), String(qs.filePath || "")), origin);
     }
     if (method === "POST" && path.endsWith("/runs/start")) {
       const parsed = parseJson(body);

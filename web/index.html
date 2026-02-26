@@ -8,51 +8,27 @@
   </head>
   <body>
     <div class="app">
-      <header class="topbar">
-        <div class="brand">
-          <div class="logo">A</div>
-          <div>
-            <div class="brand-title">AUTO</div>
-            <div class="brand-sub">AI Builder on AWS</div>
-          </div>
+      <div class="tab-bar">
+        <div class="brand-mini">
+          <div class="logo-sm">A</div>
         </div>
-        <div class="top-controls">
-          <div id="awsBadge" class="aws-badge disconnected">AWS: Not connected</div>
-          <button id="togglePanel" class="btn secondary">Settings</button>
-        </div>
-      </header>
+        <div id="tabs" class="tabs"></div>
+        <button id="addTab" class="tab-add" title="New tab">+</button>
+        <div class="tab-spacer"></div>
+        <div id="awsBadge" class="aws-badge disconnected">AWS: Not connected</div>
+        <button id="togglePanel" class="btn-sm secondary">Settings</button>
+      </div>
 
-      <div class="main">
-        <section class="chat-area">
-          <div id="chat" class="chat"></div>
-          <div class="tools-bar">
-            <button id="githubBtn" class="tool-btn" title="Analyze a GitHub repo">GitHub Analyze</button>
-            <button id="githubPushBtn" class="tool-btn" title="Push a file to GitHub">GitHub Push</button>
-            <button id="imageGenBtn" class="tool-btn" title="Generate an image">Image</button>
-            <label class="tool-btn" title="Analyze an uploaded image">
-              Analyze
-              <input id="imageUpload" type="file" accept="image/*" hidden />
-            </label>
-          </div>
-          <div class="composer">
-            <textarea id="prompt" rows="2" placeholder="Ask AUTO anything... (Ctrl+Enter to send)"></textarea>
-            <div class="composer-actions">
-              <button id="send" class="btn">Send</button>
-              <button id="clear" class="btn secondary">Clear</button>
-            </div>
-          </div>
-        </section>
+      <div class="workspace">
+        <div id="tabContent" class="tab-content"></div>
 
         <aside id="sidePanel" class="side-panel hidden">
           <div class="panel-section">
             <div class="panel-label">GitHub Token</div>
-            <div class="panel-hint">For pushing files to repos (Settings > Developer > Personal access tokens)</div>
             <input id="githubToken" class="input full" type="password" placeholder="ghp_xxxxxxxxxxxx" />
           </div>
-
           <div class="panel-section">
             <div class="panel-label">AWS Credentials</div>
-            <div class="panel-hint">Enter your AWS keys to run write actions</div>
             <input id="awsAccessKey" class="input full" placeholder="Access Key ID" />
             <input id="awsSecretKey" class="input full" type="password" placeholder="Secret Access Key" />
             <input id="awsSessionToken" class="input full" placeholder="Session Token (optional)" />
@@ -60,28 +36,30 @@
             <button id="validateAws" class="btn full">Connect</button>
             <div id="awsStatusMsg" class="status-msg"></div>
           </div>
-
           <div class="panel-section">
-            <div class="panel-label">Run an AWS Action</div>
-            <div class="panel-hint">Pick an action and fill in the details</div>
+            <div class="panel-label">AWS Action</div>
             <select id="operation" class="input full">
-              <option value="s3_put_object">Upload file to S3</option>
-              <option value="s3_delete_object">Delete file from S3</option>
-              <option value="cloudfront_invalidate">Clear CloudFront cache</option>
-              <option value="dynamodb_put_item">Write to DynamoDB</option>
-              <option value="lambda_update_env">Update Lambda env vars</option>
+              <option value="s3_put_object">Upload to S3</option>
+              <option value="s3_delete_object">Delete from S3</option>
+              <option value="cloudfront_invalidate">Invalidate CloudFront</option>
+              <option value="dynamodb_put_item">DynamoDB Put</option>
+              <option value="lambda_update_env">Lambda Env Update</option>
             </select>
             <div id="actionForm" class="action-form"></div>
-            <button id="executeAws" class="btn danger full">Run Action</button>
+            <button id="executeAws" class="btn danger full">Run</button>
             <div id="actionResult" class="status-msg"></div>
           </div>
-
           <div class="panel-section">
             <div class="panel-label">Log</div>
             <div id="runLog" class="log"></div>
           </div>
         </aside>
       </div>
+    </div>
+
+    <div id="newTabMenu" class="menu hidden">
+      <button class="menu-item" data-type="assistant">AI Assistant</button>
+      <button class="menu-item" data-type="repo">Code Repository</button>
     </div>
 
     <script src="./app.js"></script>
