@@ -4,6 +4,26 @@
   const STORE = (k) => localStorage.getItem(k) || "";
   const SAVE = (k, v) => localStorage.setItem(k, v || "");
 
+  let monacoEditor = null;
+  let monacoReady = typeof monaco !== "undefined";
+
+  function getLang(filename) {
+    const ext = (filename || "").split(".").pop().toLowerCase();
+    const map = {
+      js: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript",
+      html: "html", htm: "html", css: "css", scss: "scss", less: "less",
+      json: "json", md: "markdown", py: "python", rb: "ruby", go: "go",
+      rs: "rust", java: "java", c: "c", cpp: "cpp", h: "cpp",
+      sh: "shell", bash: "shell", yml: "yaml", yaml: "yaml",
+      xml: "xml", svg: "xml", sql: "sql", txt: "plaintext",
+    };
+    return map[ext] || "plaintext";
+  }
+
+  function disposeMonaco() {
+    if (monacoEditor) { monacoEditor.dispose(); monacoEditor = null; }
+  }
+
   const $ = (id) => document.getElementById(id);
   const tabsEl = $("tabs");
   const contentEl = $("tabContent");
@@ -103,6 +123,7 @@
 
   // ==================== RENDER CONTENT ====================
   function renderContent() {
+    disposeMonaco();
     const tab = getTab();
     contentEl.innerHTML = "";
     if (!tab) { contentEl.innerHTML = '<div class="editor-empty">Click + to open a tab</div>'; return; }
@@ -286,22 +307,42 @@
       eh.appendChild(ehActions);
       main.appendChild(eh);
 
-      const editor = document.createElement("textarea");
-      editor.className = "editor-area";
-      editor.value = tab.editorContent || "";
-      editor.spellcheck = false;
-      editor.id = "editor_" + tab.id;
-      editor.onkeydown = (e) => {
-        if (e.key === "Tab") {
-          e.preventDefault();
-          const s = editor.selectionStart;
-          editor.value = editor.value.substring(0, s) + "  " + editor.value.substring(editor.selectionEnd);
-          editor.selectionStart = editor.selectionEnd = s + 2;
+      const editorContainer = document.createElement("div");
+      editorContainer.className = "editor-area";
+      editorContainer.id = "monaco_" + tab.id;
+      main.appendChild(editorContainer);
+
+      // Initialize Monaco after DOM is ready
+      requestAnimationFrame(() => {
+        disposeMonaco();
+        if (typeof monaco !== "undefined") {
+          monacoEditor = monaco.editor.create(editorContainer, {
+            value: tab.editorContent || "",
+            language: getLang(tab.openFile),
+            theme: "vs-dark",
+            fontSize: 13,
+            fontFamily: "ui-monospace, 'Cascadia Code', 'Fira Code', monospace",
+            minimap: { enabled: true },
+            lineNumbers: "on",
+            roundedSelection: true,
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            tabSize: 2,
+            wordWrap: "on",
+            padding: { top: 8, bottom: 8 },
+            bracketPairColorization: { enabled: true },
+            suggest: { showWords: true },
+          });
+          monacoEditor.onDidChangeModelContent(() => {
+            tab.editorContent = monacoEditor.getValue();
+            tab.dirty = true;
+          });
+          monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            tab.editorContent = monacoEditor.getValue();
+            saveFile(tab);
+          });
         }
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); tab.editorContent = editor.value; saveFile(tab); }
-      };
-      editor.oninput = () => { tab.editorContent = editor.value; tab.dirty = true; };
-      main.appendChild(editor);
+      });
     } else {
       main.innerHTML = '<div class="editor-empty">Select a file or click "+ File"</div>';
     }

@@ -181,11 +181,9 @@ body {
 }
 .editor-path { font-family: monospace; color: var(--muted); }
 .editor-area {
-  flex: 1; padding: 0; margin: 0; border: none; outline: none;
-  background: rgba(0,0,0,0.15); color: var(--text);
-  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
-  font-size: 13px; line-height: 1.5; resize: none; padding: 10px 12px;
-  tab-size: 2;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 .editor-empty {
   flex: 1; display: flex; align-items: center; justify-content: center;
