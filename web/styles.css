@@ -172,7 +172,8 @@ body {
 .file-item.active { background: rgba(59,130,246,0.12); color: var(--blue); }
 .file-item .fi-icon { font-size: 11px; }
 
-.repo-main { flex: 1; display: flex; flex-direction: column; }
+.repo-right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.repo-main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .editor-header {
   padding: 6px 12px; border-bottom: 1px solid var(--border);
   display: flex; justify-content: space-between; align-items: center;
@@ -190,6 +191,50 @@ body {
   flex: 1; display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: 13px;
 }
+
+/* Repo chat panel */
+.repo-chat {
+  height: 220px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: rgba(11,16,32,0.6);
+}
+.repo-chat-header {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.repo-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  gap: 6px;
+}
+.repo-chat-messages .msg { max-width: 100%; font-size: 13px; padding: 8px 10px; }
+.repo-composer {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  align-items: flex-end;
+}
+.repo-composer textarea {
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  outline: none;
+  font-family: inherit;
+  font-size: 12px;
+}
+.repo-composer textarea:focus { border-color: rgba(59,130,246,0.5); }
 
 /* Side panel */
 .side-panel {

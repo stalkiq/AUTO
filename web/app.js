@@ -58,6 +58,8 @@
     };
     if (type === "assistant") {
       tab.messages = [{ role: "assistant", text: "Hi! I'm AUTO \u2014 your AI builder.\n\nChat, generate images, analyze repos, or push to GitHub." }];
+    } else {
+      tab.messages = [{ role: "assistant", text: "I'm here to help with your code. Create or open a file, then ask me to make changes.\n\nTip: Click \"Apply AI\" above the editor to have me rewrite the open file." }];
     }
     tabs.push(tab);
     renderTabs();
@@ -216,6 +218,7 @@
     const view = document.createElement("div");
     view.className = "repo-view";
 
+    // File sidebar
     const sidebar = document.createElement("div");
     sidebar.className = "repo-sidebar";
     const header = document.createElement("div");
@@ -252,23 +255,42 @@
     sidebar.appendChild(fileList);
     view.appendChild(sidebar);
 
+    // Right area: editor (top) + chat (bottom)
+    const rightArea = document.createElement("div");
+    rightArea.className = "repo-right";
+
+    // Editor section
     const main = document.createElement("div");
     main.className = "repo-main";
     if (tab.openFile) {
       const eh = document.createElement("div");
       eh.className = "editor-header";
       eh.innerHTML = '<span class="editor-path">' + tab.openFile + '</span>';
+      const ehActions = document.createElement("div");
+      ehActions.style.cssText = "display:flex;gap:4px";
+      const applyBtn = document.createElement("button");
+      applyBtn.className = "btn-sm secondary";
+      applyBtn.textContent = "Apply AI";
+      applyBtn.title = "Ask AI to modify this file";
+      applyBtn.onclick = () => {
+        const instruction = prompt("What changes should AI make to this file?");
+        if (!instruction) return;
+        onRepoChat(tab, "Edit " + tab.openFile + ": " + instruction + "\n\nCurrent content:\n```\n" + (tab.editorContent || "").slice(0, 3000) + "\n```\n\nRespond with the complete updated file content only, no explanation.");
+      };
       const saveBtn = document.createElement("button");
       saveBtn.className = "btn-sm";
       saveBtn.textContent = tab.dirty ? "Save *" : "Save";
       saveBtn.onclick = () => saveFile(tab);
-      eh.appendChild(saveBtn);
+      ehActions.appendChild(applyBtn);
+      ehActions.appendChild(saveBtn);
+      eh.appendChild(ehActions);
       main.appendChild(eh);
 
       const editor = document.createElement("textarea");
       editor.className = "editor-area";
       editor.value = tab.editorContent || "";
       editor.spellcheck = false;
+      editor.id = "editor_" + tab.id;
       editor.onkeydown = (e) => {
         if (e.key === "Tab") {
           e.preventDefault();
@@ -281,12 +303,70 @@
       editor.oninput = () => { tab.editorContent = editor.value; tab.dirty = true; };
       main.appendChild(editor);
     } else {
-      main.innerHTML = '<div class="editor-empty">Select a file or click "+ File" to create one</div>';
+      main.innerHTML = '<div class="editor-empty">Select a file or click "+ File"</div>';
     }
-    view.appendChild(main);
+    rightArea.appendChild(main);
+
+    // Chat panel below editor
+    const chatPanel = document.createElement("div");
+    chatPanel.className = "repo-chat";
+
+    const chatHeader = document.createElement("div");
+    chatHeader.className = "repo-chat-header";
+    chatHeader.innerHTML = '<span>\uD83E\uDD16 AI Assistant</span>';
+    chatPanel.appendChild(chatHeader);
+
+    const chatScroll = document.createElement("div");
+    chatScroll.className = "chat repo-chat-messages";
+    chatScroll.id = "chat_" + tab.id;
+    tab.messages.forEach((m) => appendMsg(chatScroll, m.role, m.text, m.extra));
+    chatPanel.appendChild(chatScroll);
+
+    const chatComposer = document.createElement("div");
+    chatComposer.className = "repo-composer";
+    const chatInput = document.createElement("textarea");
+    chatInput.rows = 1;
+    chatInput.placeholder = "Ask AI to help with your code...";
+    chatInput.onkeydown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); onRepoChat(tab, chatInput.value); chatInput.value = ""; }
+    };
+    chatComposer.appendChild(chatInput);
+    const chatSend = document.createElement("button");
+    chatSend.className = "btn";
+    chatSend.textContent = "Send";
+    chatSend.onclick = () => { onRepoChat(tab, chatInput.value); chatInput.value = ""; };
+    chatComposer.appendChild(chatSend);
+    chatPanel.appendChild(chatComposer);
+
+    rightArea.appendChild(chatPanel);
+    view.appendChild(rightArea);
     contentEl.appendChild(view);
 
+    chatScroll.scrollTop = chatScroll.scrollHeight;
     if (!tab.workspaceId) initWorkspace(tab);
+  }
+
+  async function onRepoChat(tab, text) {
+    text = (text || "").trim();
+    if (!text) return;
+    addMsgToTab(tab, "user", text);
+
+    const context = "Workspace: " + (tab.workspaceId || "none") +
+      "\nFiles: " + (tab.files.join(", ") || "none") +
+      "\nOpen file: " + (tab.openFile || "none") +
+      (tab.openFile && tab.editorContent ? "\nFile content:\n" + tab.editorContent.slice(0, 2000) : "");
+
+    const loader = addLoader(tab, "Thinking...");
+    try {
+      const out = await api("/chat", {
+        messages: [{ role: "user", content: "Context about my workspace:\n" + context + "\n\nUser request: " + text }]
+      });
+      loader.remove();
+      addMsgToTab(tab, "assistant", out.reply || "(no reply)");
+    } catch (e) {
+      loader.remove();
+      addMsgToTab(tab, "assistant", "Error: " + (e?.message || ""));
+    }
   }
 
   async function initWorkspace(tab) {
