@@ -112,8 +112,31 @@ async function chat(messages) {
     .join("\n\n");
   if (!userText) return { reply: "messages[] required" };
 
+  const systemPrompt = `You are AUTO, an AI that EXECUTES actions — not just explains them. You run inside a web app connected to real AWS services.
+
+CAPABILITIES YOU CAN TRIGGER (tell the user to use these via the app):
+- CHAT: You answer questions (this is what you're doing now)
+- SPEAK: Any of your responses can be read aloud with Polly (speaker icon)
+- IMAGE GENERATE: User clicks "Image" button to generate images with Nova Canvas
+- IMAGE ANALYZE: User clicks "Analyze" button to upload and analyze photos
+- GITHUB ANALYZE: User clicks "GitHub" button to analyze any public repo
+- GITHUB PUSH: Push files to any GitHub repo (user provides token in Settings)
+- AWS WRITE ACTIONS (via Settings panel):
+  * s3_put_object — Upload/create files in S3 buckets
+  * s3_delete_object — Delete files from S3
+  * cloudfront_invalidate — Clear CloudFront CDN cache
+  * dynamodb_put_item — Write records to DynamoDB tables
+  * lambda_update_env — Update Lambda function environment variables
+
+RULES:
+1. When a user asks to DO something, tell them exactly which button/action to use in the app. Don't give generic CLI instructions.
+2. If they want to push code to GitHub: tell them to click "GitHub Push" in the tools bar, or provide their GitHub token in Settings to enable it.
+3. If they want to modify AWS resources: tell them to open Settings and use the Write Action form.
+4. Be SPECIFIC with bucket names, file paths, and JSON payloads they can copy-paste.
+5. Keep responses short and actionable. No walls of text.`;
+
   const payload = {
-    system: [{ text: "You are AUTO, an AWS-only app-building assistant. You help users build applications, automate AWS operations, and manage their cloud infrastructure. Be concise and action-oriented. When the user asks to perform an AWS action, explain which write operation they can use from the control panel (s3_put_object, s3_delete_object, cloudfront_invalidate, dynamodb_put_item, lambda_update_env)." }],
+    system: [{ text: systemPrompt }],
     messages: [
       { role: "user", content: [{ text: userText }] },
     ],
@@ -381,6 +404,67 @@ ${summary}`;
   };
 }
 
+// --- GitHub push (create/update files) ---
+async function githubPush(body) {
+  const token = String(body?.token || "").trim();
+  if (!token) throw new Error("GitHub personal access token required. Add it in Settings.");
+  const repoUrl = String(body?.repo || "").trim();
+  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+  if (!match) throw new Error("Provide a valid GitHub repo URL");
+  const owner = match[1];
+  const repo = match[2].replace(/\.git$/, "");
+  const filePath = String(body?.path || "").trim().replace(/^\/+/, "");
+  const content = String(body?.content || "");
+  const message = String(body?.message || "Update via AUTO").trim();
+  const branch = String(body?.branch || "main").trim();
+
+  if (!filePath) throw new Error("File path required (e.g. src/index.js)");
+
+  const headers = {
+    "User-Agent": "AUTO-app",
+    Authorization: `token ${token}`,
+    Accept: "application/vnd.github.v3+json",
+    "Content-Type": "application/json",
+  };
+
+  let sha;
+  try {
+    const existing = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`, { headers });
+    if (existing.ok) {
+      const data = await existing.json();
+      sha = data.sha;
+    }
+  } catch {}
+
+  const payload = {
+    message,
+    content: Buffer.from(content).toString("base64"),
+    branch,
+    ...(sha ? { sha } : {}),
+  };
+
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `GitHub API error: ${res.status}`);
+  }
+
+  const result = await res.json();
+  return {
+    ok: true,
+    repo: `${owner}/${repo}`,
+    path: filePath,
+    branch,
+    sha: result?.content?.sha || "",
+    htmlUrl: result?.content?.html_url || "",
+  };
+}
+
 async function awsValidate(body) {
   const config = getAwsCreds(body);
   const sts = new STSClient(config);
@@ -531,6 +615,10 @@ export const handler = async (event) => {
     if (method === "POST" && path.endsWith("/github/analyze")) {
       const parsed = parseJson(body);
       return json(200, await analyzeGitHub(parsed?.url || ""), origin);
+    }
+    if (method === "POST" && path.endsWith("/github/push")) {
+      const parsed = parseJson(body);
+      return json(200, await githubPush(parsed), origin);
     }
     if (method === "POST" && path.endsWith("/chat")) {
       const parsed = parseJson(body);

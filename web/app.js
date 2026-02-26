@@ -19,8 +19,10 @@
   const sidePanel = $("sidePanel");
   const awsBadge = $("awsBadge");
   const githubBtn = $("githubBtn");
+  const githubPushBtn = $("githubPushBtn");
   const imageGenBtn = $("imageGenBtn");
   const imageUpload = $("imageUpload");
+  const githubTokenEl = $("githubToken");
 
   const awsAccessKeyEl = $("awsAccessKey");
   const awsSecretKeyEl = $("awsSecretKey");
@@ -183,6 +185,37 @@
       loader.remove();
       addMsg("assistant", "GitHub error: " + (e?.message || String(e)));
       log("GitHub error: " + (e?.message || ""));
+    }
+  }
+
+  // --- GitHub push ---
+  async function onGitHubPush() {
+    const token = (githubTokenEl.value || localStorage.getItem("auto:githubToken") || "").trim();
+    if (!token) {
+      addMsg("assistant", "You need a GitHub token to push files.\n\n1. Click \"Settings\" in the top right\n2. Paste your GitHub Personal Access Token\n3. Then click \"GitHub Push\" again\n\nGet a token at: https://github.com/settings/tokens");
+      return;
+    }
+    localStorage.setItem("auto:githubToken", token);
+
+    const repo = prompt("GitHub repo URL (e.g. https://github.com/you/repo):");
+    if (!repo) return;
+    const filePath = prompt("File path to create/update (e.g. src/index.js):");
+    if (!filePath) return;
+    const content = prompt("File content (or paste your code):");
+    if (content === null) return;
+    const message = prompt("Commit message:", "Update via AUTO") || "Update via AUTO";
+
+    addMsg("user", "Push to " + repo + ": " + filePath);
+    const loader = addLoading("Pushing to GitHub...");
+    try {
+      const out = await apiCall("/github/push", { token, repo, path: filePath, content, message });
+      loader.remove();
+      addMsg("assistant", "Pushed successfully!\n\nRepo: " + out.repo + "\nFile: " + out.path + "\nBranch: " + out.branch + "\nCommit: " + out.sha.slice(0, 7) + "\n\nView: " + out.htmlUrl);
+      log("GitHub push: " + out.path + " -> " + out.repo);
+    } catch (e) {
+      loader.remove();
+      addMsg("assistant", "Push failed: " + (e?.message || String(e)));
+      log("GitHub push error: " + (e?.message || ""));
     }
   }
 
@@ -367,6 +400,7 @@
     awsSecretKeyEl.value = localStorage.getItem(STORAGE.awsSecretKey) || "";
     awsSessionTokenEl.value = localStorage.getItem(STORAGE.awsSessionToken) || "";
     awsRegionEl.value = localStorage.getItem(STORAGE.awsRegion) || "us-east-1";
+    githubTokenEl.value = localStorage.getItem("auto:githubToken") || "";
   }
 
   sendBtn.addEventListener("click", onSend);
@@ -376,6 +410,7 @@
   executeAwsBtn.addEventListener("click", onExecuteAws);
   operationEl.addEventListener("change", renderActionForm);
   githubBtn.addEventListener("click", onGitHub);
+  githubPushBtn.addEventListener("click", onGitHubPush);
   imageGenBtn.addEventListener("click", onImageGen);
   imageUpload.addEventListener("change", (e) => { if (e.target.files[0]) onImageUpload(e.target.files[0]); e.target.value = ""; });
   promptEl.addEventListener("keydown", (e) => {

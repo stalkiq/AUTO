@@ -26,7 +26,8 @@
         <section class="chat-area">
           <div id="chat" class="chat"></div>
           <div class="tools-bar">
-            <button id="githubBtn" class="tool-btn" title="Analyze a GitHub repo">GitHub</button>
+            <button id="githubBtn" class="tool-btn" title="Analyze a GitHub repo">GitHub Analyze</button>
+            <button id="githubPushBtn" class="tool-btn" title="Push a file to GitHub">GitHub Push</button>
             <button id="imageGenBtn" class="tool-btn" title="Generate an image">Image</button>
             <label class="tool-btn" title="Analyze an uploaded image">
               Analyze
@@ -43,6 +44,12 @@
         </section>
 
         <aside id="sidePanel" class="side-panel hidden">
+          <div class="panel-section">
+            <div class="panel-label">GitHub Token</div>
+            <div class="panel-hint">For pushing files to repos (Settings > Developer > Personal access tokens)</div>
+            <input id="githubToken" class="input full" type="password" placeholder="ghp_xxxxxxxxxxxx" />
+          </div>
+
           <div class="panel-section">
             <div class="panel-label">AWS Credentials</div>
             <div class="panel-hint">Enter your AWS keys to run write actions</div>
