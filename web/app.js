@@ -18,6 +18,9 @@
   const togglePanelBtn = $("togglePanel");
   const sidePanel = $("sidePanel");
   const awsBadge = $("awsBadge");
+  const githubBtn = $("githubBtn");
+  const imageGenBtn = $("imageGenBtn");
+  const imageUpload = $("imageUpload");
 
   const awsAccessKeyEl = $("awsAccessKey");
   const awsSecretKeyEl = $("awsSecretKey");
@@ -36,14 +39,51 @@
     return (localStorage.getItem(STORAGE.apiBase) || DEFAULT_API_BASE).trim();
   }
 
-  function addMsg(role, text) {
+  // --- Message rendering ---
+  function addMsg(role, text, extra) {
     const div = document.createElement("div");
     div.className = "msg " + role;
-    div.innerHTML = '<div class="role"></div><div class="text"></div>';
-    div.querySelector(".role").textContent = role;
-    div.querySelector(".text").textContent = text;
+
+    const roleEl = document.createElement("div");
+    roleEl.className = "role";
+    roleEl.textContent = role;
+
+    const textEl = document.createElement("div");
+    textEl.className = "text";
+    textEl.textContent = text;
+
+    div.appendChild(roleEl);
+    div.appendChild(textEl);
+
+    if (extra?.image) {
+      const img = document.createElement("img");
+      img.src = "data:image/png;base64," + extra.image;
+      img.className = "msg-image";
+      img.alt = "Generated image";
+      div.appendChild(img);
+    }
+
+    if (role === "assistant" && text && text.length > 10) {
+      const speakBtn = document.createElement("button");
+      speakBtn.className = "speak-btn";
+      speakBtn.textContent = "\u{1F50A}";
+      speakBtn.title = "Read aloud (Polly)";
+      speakBtn.onclick = () => speakText(text, speakBtn);
+      div.appendChild(speakBtn);
+    }
+
     chatEl.appendChild(div);
     chatEl.scrollTop = chatEl.scrollHeight;
+    return div;
+  }
+
+  function addLoading(label) {
+    const div = document.createElement("div");
+    div.className = "msg assistant loading";
+    div.innerHTML = '<div class="role">assistant</div><div class="text">' + (label || "Thinking...") + '</div>';
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return div;
   }
 
   function log(text) {
@@ -80,17 +120,45 @@
     return data;
   }
 
-  // Chat
+  // --- Polly TTS ---
+  let currentAudio = null;
+  async function speakText(text, btn) {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    const orig = btn.textContent;
+    btn.textContent = "\u23F3";
+    btn.disabled = true;
+    try {
+      const out = await apiCall("/chat/speak", { text });
+      if (out.audio) {
+        const audio = new Audio("data:audio/mpeg;base64," + out.audio);
+        currentAudio = audio;
+        audio.play();
+        btn.textContent = "\u23F9";
+        audio.onended = () => { btn.textContent = orig; currentAudio = null; };
+        audio.onerror = () => { btn.textContent = orig; currentAudio = null; };
+      }
+    } catch (e) {
+      log("Polly error: " + (e?.message || ""));
+    } finally {
+      btn.disabled = false;
+      if (btn.textContent === "\u23F3") btn.textContent = orig;
+    }
+  }
+
+  // --- Chat ---
   async function onSend() {
     const text = (promptEl.value || "").trim();
     if (!text) return;
     addMsg("user", text);
     promptEl.value = "";
     sendBtn.disabled = true;
+    const loader = addLoading();
     try {
       const out = await apiCall("/chat", { messages: [{ role: "user", content: text }] });
+      loader.remove();
       addMsg("assistant", out.reply || "(no reply)");
     } catch (e) {
+      loader.remove();
       addMsg("assistant", "Error: " + (e?.message || String(e)));
       log("Chat error: " + (e?.message || ""));
     } finally {
@@ -99,7 +167,76 @@
     }
   }
 
-  // AWS Validate
+  // --- GitHub analyze ---
+  async function onGitHub() {
+    const url = prompt("Paste a GitHub repository URL:");
+    if (!url || !url.trim()) return;
+    addMsg("user", "Analyze this repo: " + url.trim());
+    const loader = addLoading("Analyzing GitHub repository...");
+    try {
+      const out = await apiCall("/github/analyze", { url: url.trim() });
+      loader.remove();
+      const header = out.repo + " (" + out.language + ", " + out.stars + " stars, " + out.fileCount + " files)\n\n";
+      addMsg("assistant", header + out.analysis);
+      log("GitHub analyzed: " + out.repo);
+    } catch (e) {
+      loader.remove();
+      addMsg("assistant", "GitHub error: " + (e?.message || String(e)));
+      log("GitHub error: " + (e?.message || ""));
+    }
+  }
+
+  // --- Image generation ---
+  async function onImageGen() {
+    const desc = prompt("Describe the image you want to generate:");
+    if (!desc || !desc.trim()) return;
+    addMsg("user", "Generate image: " + desc.trim());
+    const loader = addLoading("Generating image with Nova Canvas...");
+    try {
+      const out = await apiCall("/image/generate", { prompt: desc.trim() });
+      loader.remove();
+      if (out.image) {
+        addMsg("assistant", "Here's your generated image:", { image: out.image });
+      } else {
+        addMsg("assistant", "Image generation failed: " + (out.error || "unknown"));
+      }
+      log("Image generated");
+    } catch (e) {
+      loader.remove();
+      addMsg("assistant", "Image error: " + (e?.message || String(e)));
+      log("Image gen error: " + (e?.message || ""));
+    }
+  }
+
+  // --- Image analysis ---
+  async function onImageUpload(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const b64 = reader.result.split(",")[1];
+      const preview = document.createElement("img");
+      preview.src = reader.result;
+      preview.className = "msg-image";
+
+      const userDiv = addMsg("user", "Analyze this image:");
+      userDiv.appendChild(preview);
+
+      const loader = addLoading("Analyzing image with Nova...");
+      try {
+        const out = await apiCall("/image/analyze", { image: b64 });
+        loader.remove();
+        addMsg("assistant", out.analysis || "(no analysis)");
+        log("Image analyzed");
+      } catch (e) {
+        loader.remove();
+        addMsg("assistant", "Analysis error: " + (e?.message || String(e)));
+        log("Image analysis error: " + (e?.message || ""));
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // --- AWS Validate ---
   async function onValidateAws() {
     validateAwsBtn.disabled = true;
     awsStatusMsgEl.textContent = "Connecting...";
@@ -125,7 +262,7 @@
     }
   }
 
-  // Action form templates
+  // --- AWS Execute ---
   const ACTION_FIELDS = {
     s3_put_object: [
       { key: "bucket", label: "Bucket name", placeholder: "my-bucket" },
@@ -168,7 +305,6 @@
   }
 
   function getActionInput() {
-    const op = operationEl.value;
     const input = {};
     actionFormEl.querySelectorAll("[data-key]").forEach((el) => {
       const k = el.dataset.key;
@@ -195,7 +331,7 @@
       const operation = operationEl.value;
       const input = getActionInput();
       const out = await apiCall("/aws/execute", { awsCredentials: creds, operation, input });
-      actionResultEl.textContent = "Success! " + JSON.stringify(out);
+      actionResultEl.textContent = "Success!";
       actionResultEl.className = "status-msg ok";
       log(operation + ": OK");
       addMsg("assistant", "Action completed: " + operation + "\n" + JSON.stringify(out, null, 2));
@@ -210,12 +346,20 @@
 
   function onClear() {
     chatEl.innerHTML = "";
-    addMsg("assistant", "Hi! I'm AUTO — your AI builder on AWS.\n\nJust type what you want to build or ask me anything about AWS.\n\nIf you want to run actions on your AWS account, click \"AWS Settings\" in the top right.");
+    addMsg("assistant",
+      "Hi! I'm AUTO \u2014 your AI builder on AWS.\n\n" +
+      "Chat \u2014 Ask me anything, I'll respond with Nova AI\n" +
+      "\uD83D\uDD0A \u2014 Click the speaker icon on any response to hear it read aloud (Polly)\n" +
+      "GitHub \u2014 Paste a repo URL and I'll analyze the codebase\n" +
+      "Image \u2014 Describe an image and I'll generate it (Nova Canvas)\n" +
+      "Analyze \u2014 Upload a photo and I'll describe what I see\n\n" +
+      "For AWS write actions, click Settings in the top right."
+    );
   }
 
   function togglePanel() {
     sidePanel.classList.toggle("hidden");
-    togglePanelBtn.textContent = sidePanel.classList.contains("hidden") ? "AWS Settings" : "Close";
+    togglePanelBtn.textContent = sidePanel.classList.contains("hidden") ? "Settings" : "Close";
   }
 
   function restoreSavedInputs() {
@@ -225,21 +369,19 @@
     awsRegionEl.value = localStorage.getItem(STORAGE.awsRegion) || "us-east-1";
   }
 
-  // Event listeners
   sendBtn.addEventListener("click", onSend);
   clearBtn.addEventListener("click", onClear);
   togglePanelBtn.addEventListener("click", togglePanel);
   validateAwsBtn.addEventListener("click", onValidateAws);
   executeAwsBtn.addEventListener("click", onExecuteAws);
   operationEl.addEventListener("change", renderActionForm);
+  githubBtn.addEventListener("click", onGitHub);
+  imageGenBtn.addEventListener("click", onImageGen);
+  imageUpload.addEventListener("change", (e) => { if (e.target.files[0]) onImageUpload(e.target.files[0]); e.target.value = ""; });
   promptEl.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-      e.preventDefault();
-      onSend();
-    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); onSend(); }
   });
 
-  // Init
   restoreSavedInputs();
   renderActionForm();
   onClear();

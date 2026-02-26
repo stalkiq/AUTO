@@ -18,13 +18,21 @@
         </div>
         <div class="top-controls">
           <div id="awsBadge" class="aws-badge disconnected">AWS: Not connected</div>
-          <button id="togglePanel" class="btn secondary">AWS Settings</button>
+          <button id="togglePanel" class="btn secondary">Settings</button>
         </div>
       </header>
 
       <div class="main">
         <section class="chat-area">
           <div id="chat" class="chat"></div>
+          <div class="tools-bar">
+            <button id="githubBtn" class="tool-btn" title="Analyze a GitHub repo">GitHub</button>
+            <button id="imageGenBtn" class="tool-btn" title="Generate an image">Image</button>
+            <label class="tool-btn" title="Analyze an uploaded image">
+              Analyze
+              <input id="imageUpload" type="file" accept="image/*" hidden />
+            </label>
+          </div>
           <div class="composer">
             <textarea id="prompt" rows="2" placeholder="Ask AUTO anything... (Ctrl+Enter to send)"></textarea>
             <div class="composer-actions">

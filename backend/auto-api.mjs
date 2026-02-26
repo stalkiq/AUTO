@@ -1,17 +1,13 @@
 // AUTO control-plane Lambda (AWS-only, OpenClaw-like scaffold)
 // Routes:
-// - POST /chat
-// - POST /workspace/create
-// - POST /workspace/patch
-// - GET  /workspace/list?workspaceId=...
-// - POST /runs/start
-// - GET  /runs/status?runId=...
-// - POST /aws/validate
-// - POST /aws/execute
-//
-// IMPORTANT:
-// - This scaffold allows write operations using caller-provided AWS credentials.
-// - Keep auth enabled in production and restrict operations to an allowlist.
+// - POST /chat           — Nova chat
+// - POST /chat/speak     — Polly TTS
+// - POST /image/generate — Nova Canvas image generation
+// - POST /image/analyze  — Nova vision (describe an image)
+// - POST /github/analyze — Fetch + describe a GitHub repo
+// - POST /workspace/create, /workspace/patch, GET /workspace/list
+// - POST /runs/start, GET /runs/status
+// - POST /aws/validate, /aws/execute
 
 import { randomUUID } from "node:crypto";
 import { BedrockRuntimeClient, InvokeModelCommand } from "@aws-sdk/client-bedrock-runtime";
@@ -22,6 +18,7 @@ import { DynamoDBDocumentClient, PutCommand, GetCommand } from "@aws-sdk/lib-dyn
 import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { CloudFrontClient, CreateInvalidationCommand } from "@aws-sdk/client-cloudfront";
 import { LambdaClient, UpdateFunctionConfigurationCommand, GetFunctionConfigurationCommand } from "@aws-sdk/client-lambda";
+import { PollyClient, SynthesizeSpeechCommand } from "@aws-sdk/client-polly";
 
 const REGION = process.env.AWS_REGION || "us-east-1";
 const MODEL_ID = process.env.NOVA_MODEL_ID || "amazon.nova-lite-v1:0";
@@ -35,6 +32,7 @@ const bedrock = new BedrockRuntimeClient({ region: REGION });
 const s3 = new S3Client({ region: REGION });
 const codebuild = new CodeBuildClient({ region: REGION });
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
+const polly = new PollyClient({ region: REGION });
 
 function json(statusCode, body, origin) {
   return {
@@ -238,6 +236,151 @@ async function runsStatus(runId) {
   return out.Item || { runId, status: "not_found" };
 }
 
+// --- Polly TTS ---
+async function speak(text) {
+  const clean = String(text || "").slice(0, 3000);
+  if (!clean) return { error: "text required" };
+  const cmd = new SynthesizeSpeechCommand({
+    Text: clean,
+    OutputFormat: "mp3",
+    VoiceId: "Ruth",
+    Engine: "neural",
+  });
+  const res = await polly.send(cmd);
+  const chunks = [];
+  for await (const chunk of res.AudioStream) chunks.push(chunk);
+  const buf = Buffer.concat(chunks);
+  return { audio: buf.toString("base64"), contentType: "audio/mpeg" };
+}
+
+// --- Nova Canvas image generation ---
+async function generateImage(prompt) {
+  const p = String(prompt || "").trim();
+  if (!p) return { error: "prompt required" };
+  const payload = {
+    taskType: "TEXT_IMAGE",
+    textToImageParams: { text: p },
+    imageGenerationConfig: { numberOfImages: 1, height: 512, width: 512, quality: "standard" },
+  };
+  const cmd = new InvokeModelCommand({
+    modelId: "amazon.nova-canvas-v1:0",
+    contentType: "application/json",
+    accept: "application/json",
+    body: new TextEncoder().encode(JSON.stringify(payload)),
+  });
+  const res = await bedrock.send(cmd);
+  const raw = new TextDecoder().decode(res.body);
+  const out = parseJson(raw);
+  const b64 = out?.images?.[0];
+  if (!b64) return { error: "No image returned" };
+  return { image: b64, contentType: "image/png" };
+}
+
+// --- Nova vision (image analysis) ---
+async function analyzeImage(imageBase64, question) {
+  const q = String(question || "Describe this image in detail.").trim();
+  const payload = {
+    system: [{ text: "You are AUTO, an AI assistant. Analyze the provided image thoroughly." }],
+    messages: [{
+      role: "user",
+      content: [
+        { image: { format: "png", source: { bytes: imageBase64 } } },
+        { text: q },
+      ],
+    }],
+    inferenceConfig: { temperature: 0.3, max_new_tokens: 1000 },
+  };
+  const cmd = new InvokeModelCommand({
+    modelId: "amazon.nova-lite-v1:0",
+    contentType: "application/json",
+    accept: "application/json",
+    body: new TextEncoder().encode(JSON.stringify(payload)),
+  });
+  const res = await bedrock.send(cmd);
+  const raw = new TextDecoder().decode(res.body);
+  const out = parseJson(raw);
+  const reply = out?.output?.message?.content?.[0]?.text || raw;
+  return { analysis: String(reply || "") };
+}
+
+// --- GitHub repo analysis ---
+async function analyzeGitHub(repoUrl) {
+  const url = String(repoUrl || "").trim();
+  const match = url.match(/github\.com\/([^/]+)\/([^/]+)/);
+  if (!match) throw new Error("Provide a valid GitHub URL (e.g. https://github.com/owner/repo)");
+  const owner = match[1];
+  const repo = match[2].replace(/\.git$/, "");
+  const api = `https://api.github.com/repos/${owner}/${repo}`;
+
+  const headers = { "User-Agent": "AUTO-app", Accept: "application/vnd.github.v3+json" };
+  const repoRes = await fetch(api, { headers });
+  if (!repoRes.ok) throw new Error(`GitHub API error: ${repoRes.status}`);
+  const repoData = await repoRes.json();
+
+  const treeRes = await fetch(`${api}/git/trees/${repoData.default_branch}?recursive=1`, { headers });
+  const treeData = treeRes.ok ? await treeRes.json() : { tree: [] };
+  const files = (treeData.tree || []).filter((f) => f.type === "blob").map((f) => f.path).slice(0, 200);
+
+  let readme = "";
+  try {
+    const readmeRes = await fetch(`${api}/readme`, { headers: { ...headers, Accept: "application/vnd.github.v3.raw" } });
+    if (readmeRes.ok) readme = (await readmeRes.text()).slice(0, 4000);
+  } catch {}
+
+  let packageJson = "";
+  try {
+    const pkgRes = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${repoData.default_branch}/package.json`, { headers });
+    if (pkgRes.ok) packageJson = (await pkgRes.text()).slice(0, 2000);
+  } catch {}
+
+  const summary = [
+    `Repository: ${owner}/${repo}`,
+    `Description: ${repoData.description || "None"}`,
+    `Language: ${repoData.language || "Unknown"}`,
+    `Stars: ${repoData.stargazers_count}, Forks: ${repoData.forks_count}`,
+    `Default branch: ${repoData.default_branch}`,
+    `\nFile tree (${files.length} files):\n${files.join("\n")}`,
+    readme ? `\nREADME:\n${readme}` : "",
+    packageJson ? `\npackage.json:\n${packageJson}` : "",
+  ].join("\n");
+
+  const prompt = `Analyze this GitHub repository and provide:
+1. A clear description of what this project does
+2. The tech stack and architecture
+3. Strengths of the codebase
+4. Suggested improvements or changes the owner could make
+5. Ask if the user would like help implementing any of these changes
+
+Repository data:
+${summary}`;
+
+  const payload = {
+    system: [{ text: "You are AUTO, an expert code reviewer and AWS architect. Analyze codebases thoroughly and suggest practical improvements. Be specific with file names and line-level suggestions." }],
+    messages: [{ role: "user", content: [{ text: prompt }] }],
+    inferenceConfig: { temperature: 0.3, max_new_tokens: 1500 },
+  };
+
+  const cmd = new InvokeModelCommand({
+    modelId: MODEL_ID,
+    contentType: "application/json",
+    accept: "application/json",
+    body: new TextEncoder().encode(JSON.stringify(payload)),
+  });
+  const res = await bedrock.send(cmd);
+  const raw = new TextDecoder().decode(res.body);
+  const out = parseJson(raw);
+  const analysis = out?.output?.message?.content?.[0]?.text || raw;
+
+  return {
+    repo: `${owner}/${repo}`,
+    description: repoData.description || "",
+    language: repoData.language || "",
+    stars: repoData.stargazers_count,
+    fileCount: files.length,
+    analysis: String(analysis || ""),
+  };
+}
+
 async function awsValidate(body) {
   const config = getAwsCreds(body);
   const sts = new STSClient(config);
@@ -373,6 +516,22 @@ export const handler = async (event) => {
   if (requiresAuth(path) && !isAuthorized(event)) return json(401, { error: "Unauthorized" }, origin);
 
   try {
+    if (method === "POST" && path.endsWith("/chat/speak")) {
+      const parsed = parseJson(body);
+      return json(200, await speak(parsed?.text || ""), origin);
+    }
+    if (method === "POST" && path.endsWith("/image/generate")) {
+      const parsed = parseJson(body);
+      return json(200, await generateImage(parsed?.prompt || ""), origin);
+    }
+    if (method === "POST" && path.endsWith("/image/analyze")) {
+      const parsed = parseJson(body);
+      return json(200, await analyzeImage(parsed?.image || "", parsed?.question || ""), origin);
+    }
+    if (method === "POST" && path.endsWith("/github/analyze")) {
+      const parsed = parseJson(body);
+      return json(200, await analyzeGitHub(parsed?.url || ""), origin);
+    }
     if (method === "POST" && path.endsWith("/chat")) {
       const parsed = parseJson(body);
       return json(200, await chat(parsed?.messages || []), origin);
