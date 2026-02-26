@@ -67,6 +67,13 @@ cd /tmp/lambda-pkg && zip -qr /tmp/auto-api-lambda.zip .
 aws lambda update-function-code --function-name auto-api --zip-file fileb:///tmp/auto-api-lambda.zip
 ```
 
+### New feature routes
+
+- `POST /chat/speak` — Polly neural TTS (Ruth voice). Send `{ "text": "..." }`, returns `{ "audio": "<base64 mp3>", "contentType": "audio/mpeg" }`.
+- `POST /image/generate` — Nova Canvas text-to-image. Send `{ "prompt": "..." }`, returns `{ "image": "<base64 png>" }`. 512x512.
+- `POST /image/analyze` — Nova Lite vision. Send `{ "image": "<base64>", "question": "..." }`, returns `{ "analysis": "..." }`.
+- `POST /github/analyze` — Fetches GitHub repo tree + README via public API, sends to Nova for analysis. Send `{ "url": "https://github.com/owner/repo" }`, returns repo info + analysis with suggested improvements.
+
 ### Nova Bedrock API format
 
 The Nova model requires a specific payload format different from other models:
